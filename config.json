@@ -1,0 +1,87 @@
+{
+    "materials": {
+        "AL6061": {
+            "Vc": 100.0,
+            "fr_factor": 0.015,
+            "desc": "鋁合金 6061 (Aluminum)"
+        },
+        "SUS304": {
+            "Vc": 25.0,
+            "fr_factor": 0.008,
+            "desc": "不鏽鋼 304 (Stainless)"
+        },
+        "SUS420": {
+            "Vc": 35.0,
+            "fr_factor": 0.009,
+            "desc": "不鏽鋼 420J2 (Stainless)"
+        },
+        "TI6AL4V": {
+            "Vc": 18.0,
+            "fr_factor": 0.006,
+            "desc": "鈦合金 (Titanium)"
+        },
+        "CERAMIC": {
+            "Vc": 15.0,
+            "fr_factor": 0.003,
+            "desc": "工程陶瓷 (Ceramic)"
+        }
+    },
+    "coolant_factors": {
+        "MQL": 0.8,
+        "Internal": 1.1,
+        "Dry": 0.6
+    },
+    "ijk_strategies": {
+        "safety": {
+            "i_ratio": 0.5,
+            "j_ratio": 0.1,
+            "k_ratio": 0.2
+        },
+        "efficient": {
+            "i_ratio": 0.8,
+            "j_ratio": 0.15,
+            "k_ratio": 0.3
+        },
+        "deep_hole": {
+            "i_ratio": 0.4,
+            "j_ratio": 0.05,
+            "k_ratio": 0.1
+        }
+    },
+    "limits": {
+        "max_rpm": 10000.0,
+        "min_q": 0.05,
+        "micro_drill_threshold": 1.0,
+        "micro_drill_penalty": 0.8
+    },
+    "dri_factors": {
+        "material": {
+            "AL6061": 0.8,
+            "SUS304": 1.4,
+            "SUS420": 1.2,
+            "TI6AL4V": 1.6,
+            "CERAMIC": 2.0
+        },
+        "coolant": {
+            "Internal": 0.75,
+            "MQL": 1.2,
+            "Dry": 1.6
+        },
+        "tool": {
+            "CARBIDE": 0.9,
+            "HSS": 1.4
+        }
+    },
+    "taylor_params": {
+        "CARBIDE": {
+            "n": 0.22
+        },
+        "HSS": {
+            "n": 0.1
+        }
+    },
+    "optimization_weights": {
+        "time": 0.7,
+        "life": 0.3
+    }
+}
