@@ -243,6 +243,120 @@ class DrillingAnalysisEngine:
 
         return i_val, j_val, k_val
 
+    # =========================================================================
+    # G66 P9131 專用方法
+    # =========================================================================
+    # 重要：G66 P9131 的 I/J/K 語意與 G83 的 I/J/K 完全不同！
+    #
+    # ┌──────────┬──────────────────────┬──────────────────────┐
+    # │ 參數     │ G66 P9131 語意       │ G83 語意             │
+    # ├──────────┼──────────────────────┼──────────────────────┤
+    # │ I        │ 分段切換 Z 座標位置  │ 初始啄鑽深度         │
+    # │ J        │ 該段啄鑽量 (Q)       │ 每次遞減量           │
+    # │ K        │ 該段進給速度 (F)     │ 最小啄鑽深度         │
+    # └──────────┴──────────────────────┴──────────────────────┘
+    #
+    # P9131 格式：G65 P9131 R Z (S) I1 J1 K1 ~ I4 J4 K4 (T)
+    # 最多 4 組，每組定義一個獨立加工分段。
+    # =========================================================================
+
+    @classmethod
+    def calc_g66_segments(cls, tool_dia, target_z, base_feed, strategy='IJK_DYNAMIC', config=None):
+        """
+        [G66 P9131 專用] 根據深度與風險計算分段鑽孔參數。
+        
+        與 G83 的差異：
+        - G83 的 get_ld_sens_ijk 回傳 (初始深度, 遞減量, 最小深度)
+        - 本方法回傳分段列表，每段包含：
+          I = 該段結束的 Z 座標位置 (絕對值)
+          J = 該段每次啄鑽量 (類似 G83 的 Q)
+          K = 該段進給速度 (F 值)
+        
+        Args:
+            tool_dia: 刀具直徑
+            target_z: 目標 Z 深度 (負值)
+            base_feed: 基礎進給速度 (已由引擎計算)
+            strategy: 風險策略 (DIRECT/Q_MODE/IJK_DYNAMIC/DEEP_PROTECT)
+            config: ConfigManager 實例
+            
+        Returns:
+            list: [{'I': z_pos, 'J': peck_amount, 'K': feed_rate}, ...]
+        """
+        total_depth = abs(target_z)
+        if total_depth < 1e-6 or tool_dia <= 0:
+            return []
+        
+        ld_ratio = total_depth / tool_dia
+        
+        # --- 1. 決定分段數量 (依長徑比，最多 4 段) ---
+        if ld_ratio <= 2.0:
+            num_segments = 1
+        elif ld_ratio <= 5.0:
+            num_segments = 2
+        elif ld_ratio <= 8.0:
+            num_segments = 3
+        else:
+            num_segments = 4  # P9131 上限
+        
+        # 保護模式額外增加一段 (但不超過 4)
+        if strategy == 'DEEP_PROTECT' and num_segments < 4:
+            num_segments += 1
+        
+        # --- 2. 計算每段的 Z 座標位置 (I 值) ---
+        # 採用遞減分配：越深的段落越短 (排屑困難，需更頻繁退刀)
+        # 例如 3 段比例 = [0.4, 0.35, 0.25]
+        if num_segments == 1:
+            ratios = [1.0]
+        elif num_segments == 2:
+            ratios = [0.55, 0.45]
+        elif num_segments == 3:
+            ratios = [0.40, 0.35, 0.25]
+        else:  # 4 段
+            ratios = [0.35, 0.30, 0.20, 0.15]
+        
+        # 累積計算每段的 Z 位置
+        z_positions = []
+        cumulative = 0.0
+        for r in ratios:
+            cumulative += total_depth * r
+            z_positions.append(-round(cumulative, 4))
+        # 最後一段強制對齊 target_z，避免浮點誤差
+        z_positions[-1] = round(target_z, 4)
+        
+        # --- 3. 計算每段的啄鑽量 (J 值) ---
+        # 首段最大 (≈ 0.8D ~ 1.0D)，逐段遞減
+        # 注意：這裡的 J 是「每次啄鑽的深度」，不是 G83 的「遞減量」
+        base_peck = tool_dia * 0.8  # 首段基礎啄鑽量
+        if strategy == 'DEEP_PROTECT':
+            base_peck *= 0.7  # 保護模式縮減
+        
+        # 限制啄鑽量：不超過該段深度，不低於 0.05mm
+        min_peck = max(0.05, tool_dia * 0.1)
+        
+        # --- 4. 計算每段的進給速度 (K 值) ---
+        # 首段使用基礎進給，逐段降低
+        # 注意：這裡的 K 是「進給速度 F」，不是 G83 的「最小啄鑽深度」
+
+        segments = []
+        for i in range(num_segments):
+            # 深度衰減係數：越深的段，啄鑽量和進給越低
+            depth_factor = 1.0 - (i / num_segments) * 0.4  # 0.6 ~ 1.0
+            
+            # J：該段啄鑽量
+            seg_depth = total_depth * ratios[i]
+            peck = round(max(min_peck, min(base_peck * depth_factor, seg_depth)), 4)
+            
+            # K：該段進給速度
+            feed = round(base_feed * depth_factor, 1)
+            
+            segments.append({
+                'I': z_positions[i],   # Z 座標位置 (絕對值，負數)
+                'J': peck,             # 每次啄鑽量
+                'K': feed              # 進給速度
+            })
+        
+        return segments
+
     @classmethod
     def calculate_optimized_params(cls, 
                                    tool_dia, 
@@ -363,11 +477,23 @@ class DrillingAnalysisEngine:
                 result['Q'] = round(max(q_val, min_q), 4)
         else:
             # 進入 IJK 模式
+            # --- G83 專用：計算初始/遞減/最小值 ---
             i, j, k = cls.get_ld_sens_ijk(tool_dia, ld_ratio)
             if strategy == "DEEP_PROTECT":
                 i *= 0.8; k *= 0.8
                 result['messages'].append("保護模式：額外縮減 Peck 深度")
             result['I'], result['J'], result['K'] = i, j, k
+            
+            # --- G66 P9131 專用：計算分段列表 ---
+            # 注意：G66 的 IJK 語意與上面的 G83 完全不同！
+            # G66 I=Z位置, J=啄鑽量, K=進給速度
+            result['g66_segments'] = cls.calc_g66_segments(
+                tool_dia=tool_dia,
+                target_z=target_z,
+                base_feed=result['F'],
+                strategy=strategy,
+                config=config
+            )
             
         # 5. 壽命預估 (V6.0 $V_{ref}$ 對齊)
         life_idx = cls.estimate_tool_life_index(vc_final, vc_ref, tool_mat_key, ld_ratio, feed_ratio=feed_adj_factor, config=config)

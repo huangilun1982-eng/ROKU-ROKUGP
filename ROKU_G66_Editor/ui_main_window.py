@@ -1,5 +1,6 @@
 import os
 import sys
+import copy
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QGroupBox, QLabel, QLineEdit, QPushButton, QFileDialog, 
@@ -448,9 +449,9 @@ class MainWindow(QMainWindow):
         ]
         for ctrl in controls: ctrl.blockSignals(True)
         
-        # 設定基礎參數
-        self.spin_r.setValue(static.get('R', 0.0))
-        self.spin_z.setValue(static.get('Z', 0.0))
+        # 設定基礎參數 (加入 or 0.0 保護)
+        self.spin_r.setValue(static.get('R', 0.0) or 0.0)
+        self.spin_z.setValue(static.get('Z', 0.0) or 0.0)
         
         is_fixed = (cycle_type == 'G83')
         self.combo_cycle.setVisible(is_fixed)
@@ -736,8 +737,16 @@ class MainWindow(QMainWindow):
         msg += f"F (進給): <font color='red'>{result['F']}</font> mm/min<br>"
         
         if result['use_ijk']:
-            msg += f"模式: <font color='blue'>G83 I/J/K ({result['strategy']})</font><br>"
-            msg += f"I: {result['I']}, J: {result['J']}, K: {result['K']}<br>"
+            if cycle_type == 'G66':
+                # G66 P9131 報告：顯示分段資訊 (I=Z位置, J=啄鑽量, K=進給)
+                g66_segs = result.get('g66_segments', [])
+                msg += f"模式: <font color='blue'>G66 P9131 分段鑽孔 ({result['strategy']})</font><br>"
+                for si, seg in enumerate(g66_segs, 1):
+                    msg += f"段{si}: Z={seg['I']}, Q={seg['J']}, F={seg['K']}<br>"
+            else:
+                # G83 報告：顯示靜態 I/J/K (初始/遞減/最小)
+                msg += f"模式: <font color='blue'>G83 I/J/K ({result['strategy']})</font><br>"
+                msg += f"I: {result['I']}, J: {result['J']}, K: {result['K']}<br>"
         else:
             mode_desc = "DIRECT 無啄鑽" if result['Q'] < 1e-6 else "G83 Q 標準"
             msg += f"模式: <font color='green'>{mode_desc}</font><br>"
@@ -761,9 +770,25 @@ class MainWindow(QMainWindow):
             self.combo_cycle.setCurrentIndex(idx)
             
         if use_ijk:
-            self.spin_g83_i.blockSignals(True); self.spin_g83_i.setValue(result['I']); self.spin_g83_i.blockSignals(False)
-            self.spin_g83_j.blockSignals(True); self.spin_g83_j.setValue(result['J']); self.spin_g83_j.blockSignals(False)
-            self.spin_g83_k.blockSignals(True); self.spin_g83_k.setValue(result['K']); self.spin_g83_k.blockSignals(False)
+            # =============================================================
+            # G83 與 G66 的 IJK 套用邏輯完全不同，必須分開處理！
+            # G83：I=初始啄鑽深度, J=每次遞減量, K=最小啄鑽深度 → 寫入靜態 spin box
+            # G66 P9131：I=Z座標位置, J=該段啄鑽量, K=該段進給速度 → 寫入動態表格
+            # =============================================================
+            
+            if cycle_type == 'G66':
+                # --- G66 P9131 專用：使用引擎計算的分段列表 ---
+                g66_segs = result.get('g66_segments', [])
+                if g66_segs:
+                    self.table_ijk.blockSignals(True)
+                    self.table_ijk.load_data(g66_segs)
+                    self.table_ijk.blockSignals(False)
+                    msg += f"<br><b>G66 已生成 {len(g66_segs)} 段分段鑽孔序列</b><br>"
+            else:
+                # --- G83 專用：更新靜態 I/J/K spin box ---
+                self.spin_g83_i.blockSignals(True); self.spin_g83_i.setValue(result['I']); self.spin_g83_i.blockSignals(False)
+                self.spin_g83_j.blockSignals(True); self.spin_g83_j.setValue(result['J']); self.spin_g83_j.blockSignals(False)
+                self.spin_g83_k.blockSignals(True); self.spin_g83_k.setValue(result['K']); self.spin_g83_k.blockSignals(False)
         else:
             self.spin_q.blockSignals(True); self.spin_q.setValue(result['Q']); self.spin_q.blockSignals(False)
         
@@ -784,20 +809,20 @@ class MainWindow(QMainWindow):
             init_s = data.get('initial_static', {})
             init_mode = data.get('initial_use_ijk_mode', False)
             
-            # 還原各項數值
-            self.spin_r.blockSignals(True); self.spin_r.setValue(init_s.get('R', 0.0)); self.spin_r.blockSignals(False)
-            self.spin_z.blockSignals(True); self.spin_z.setValue(init_s.get('Z', 0.0)); self.spin_z.blockSignals(False)
-            self.spin_s.blockSignals(True); self.spin_s.setValue(init_s.get('S', 0.0)); self.spin_s.blockSignals(False)
-            self.spin_t.blockSignals(True); self.spin_t.setValue(init_s.get('T', 0.0)); self.spin_t.blockSignals(False)
-            self.spin_f.blockSignals(True); self.spin_f.setValue(init_s.get('F', 0.0)); self.spin_f.blockSignals(False)
-            self.spin_q.blockSignals(True); self.spin_q.setValue(init_s.get('Q', 0.0)); self.spin_q.blockSignals(False)
+            # 還原各項數值 (加入 or 0.0 保護，防止 NoneType 崩潰)
+            self.spin_r.blockSignals(True); self.spin_r.setValue(init_s.get('R', 0.0) or 0.0); self.spin_r.blockSignals(False)
+            self.spin_z.blockSignals(True); self.spin_z.setValue(init_s.get('Z', 0.0) or 0.0); self.spin_z.blockSignals(False)
+            self.spin_s.blockSignals(True); self.spin_s.setValue(init_s.get('S', 0.0) or 0.0); self.spin_s.blockSignals(False)
+            self.spin_t.blockSignals(True); self.spin_t.setValue(init_s.get('T', 0.0) or 0.0); self.spin_t.blockSignals(False)
+            self.spin_f.blockSignals(True); self.spin_f.setValue(init_s.get('F', 0.0) or 0.0); self.spin_f.blockSignals(False)
+            self.spin_q.blockSignals(True); self.spin_q.setValue(init_s.get('Q', 0.0) or 0.0); self.spin_q.blockSignals(False)
             
-            self.spin_g83_i.blockSignals(True); self.spin_g83_i.setValue(init_s.get('I', 0.0)); self.spin_g83_i.blockSignals(False)
-            self.spin_g83_j.blockSignals(True); self.spin_g83_j.setValue(init_s.get('J', 0.0)); self.spin_g83_j.blockSignals(False)
-            self.spin_g83_k.blockSignals(True); self.spin_g83_k.setValue(init_s.get('K', 0.0)); self.spin_g83_k.blockSignals(False)
+            self.spin_g83_i.blockSignals(True); self.spin_g83_i.setValue(init_s.get('I', 0.0) or 0.0); self.spin_g83_i.blockSignals(False)
+            self.spin_g83_j.blockSignals(True); self.spin_g83_j.setValue(init_s.get('J', 0.0) or 0.0); self.spin_g83_j.blockSignals(False)
+            self.spin_g83_k.blockSignals(True); self.spin_g83_k.setValue(init_s.get('K', 0.0) or 0.0); self.spin_g83_k.blockSignals(False)
             
             # [L4 修復] 還原主軸轉速
-            init_rpm = data.get('initial_rpm', 0)
+            init_rpm = data.get('initial_rpm', 0) or 0
             self.spin_rpm.blockSignals(True); self.spin_rpm.setValue(init_rpm); self.spin_rpm.blockSignals(False)
             data['rpm'] = init_rpm
             
@@ -806,7 +831,14 @@ class MainWindow(QMainWindow):
             if self.combo_cycle.currentIndex() != idx:
                 self.combo_cycle.setCurrentIndex(idx)
             
-            # 觸發更新
-            self.on_q_changed()
-            self.update_internal_data()
+            # 3. 重要：還原 G66 的動態 IJK 列表 (如果有的話)
+            init_dynamic = data.get('initial_dynamic', [])
+            self.table_ijk.blockSignals(True)
+            self.table_ijk.load_data(copy.deepcopy(init_dynamic))
+            self.table_ijk.blockSignals(False)
+            
+            # 4. 觸發全面更新
+            self.on_q_changed() # 更新 G83 內部列表 (如果是 G83)
+            self.update_internal_data() # 同步到 P9131 行與 NC 預覽
             self.update_visualization()
+            QMessageBox.information(self, "成功", "已恢復至初始參數狀態。")
