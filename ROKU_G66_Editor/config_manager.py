@@ -49,6 +49,28 @@ class ConfigManager:
         'optimization_weights': {
             'time': 0.7,
             'life': 0.3
+        },
+        # [改進 2] 材質感知啄鑽修正係數：排屑容易的材質可增大啄鑽量
+        'peck_factors': {
+            'AL6061': 1.3,    # 鋁合金：排屑流暢
+            'SUS304': 0.9,    # 不鏽鋼 304
+            'SUS420': 1.0,    # 不鏽鋼 420J2（基準）
+            'TI6AL4V': 0.7,   # 鈦合金：黏性高
+            'CERAMIC': 0.5    # 陶瓷：脆性材料
+        },
+        # [改進 4] 分段公比：控制 G66 各段長度比例 (易切削→首段更長)
+        'segment_common_ratios': {
+            'AL6061': 0.80,
+            'SUS304': 0.70,
+            'SUS420': 0.72,
+            'TI6AL4V': 0.65,
+            'CERAMIC': 0.55
+        },
+        # [改進 5] 優化預設檔：效率/均衡/安全
+        'optimization_presets': {
+            'efficiency': {'peck_mult': 1.2, 'feed_mult': 1.1, 'seg_adj': -1, 'desc': '⚡ 效率優先'},
+            'balanced':   {'peck_mult': 1.0, 'feed_mult': 1.0, 'seg_adj':  0, 'desc': '⚖️ 均衡'},
+            'safety':     {'peck_mult': 0.7, 'feed_mult': 0.85,'seg_adj':  1, 'desc': '🛡️ 安全優先'}
         }
     }
 

@@ -28,42 +28,26 @@ class DrillingAnalysisEngine:
         total_t = 0
         current_z = r_point # 從 R 點開始計算
         
+        # [FIX-8] 統一為單一啄鑽時間計算邏輯 (G83 專用)
+        # G66 P9131 時間預估使用 calc_g66_drilling_time()
         for idx, peck in enumerate(ijk_list):
             # peck['I'] 是當次下鑽的增量深度 (通常為負值)
             increment = peck.get('I', 0.0)
             prev_z = current_z
             target_z = prev_z + increment
             
-            if is_ijk_mode:
-                # 進階 IJK 模式 (Macro P9131)：使用快速移動下壓
-                if idx == 0:
-                    # 第一段：從 R 點一路進給進刀
-                    feed_dist = abs(target_z - r_point)
-                    total_t += feed_dist / feedrate
-                else:
-                    # 後續段：快速移動到 (上次深度 + 間隙)，再進給進刀
-                    # 1. 快速移動：R -> (上次深度 + 間隙)
-                    dist_g0_down = abs(r_point - (prev_z + clearance))
-                    total_t += dist_g0_down / g0_speed
-                    # 2. 進給切削：(上次深度 + 間隙) -> 本次目標深度
-                    feed_dist = abs(target_z - (prev_z + clearance))
-                    total_t += feed_dist / feedrate
+            if idx == 0:
+                # 第一跳：從 R 點一路進給進刀
+                feed_dist = abs(target_z - r_point)
+                total_t += feed_dist / feedrate
             else:
-                # 標準 Q 模式 (G83)：第一跳從R點進給，後續跳快速回孔+進給切削
-                if idx == 0:
-                    # 第一跳：從 R 點一路進給進刀
-                    feed_dist = abs(target_z - r_point)
-                    total_t += feed_dist / feedrate
-                else:
-                    # 後續跳：快速回到 (上次深度 + 間隙)，再進給進刀
-                    # 1. 快速移動：R → (上次深度 + 間隙)
-                    dist_g0_down = abs(r_point - (prev_z + clearance))
-                    total_t += dist_g0_down / g0_speed
-                    # 2. 進給切削：(上次深度 + 間隙) → 本次目標深度
-                    feed_dist = abs(target_z - (prev_z + clearance))
-                    total_t += feed_dist / feedrate
+                # 後續跳：快速回到 (上次深度 + 間隙)，再進給進刀
+                dist_g0_down = abs(r_point - (prev_z + clearance))
+                total_t += dist_g0_down / g0_speed
+                feed_dist = abs(target_z - (prev_z + clearance))
+                total_t += feed_dist / feedrate
             
-            # 所有模式：孔底均快速退回 R
+            # 孔底快速退回 R
             dist_g0_up = abs(target_z - r_point)
             total_t += dist_g0_up / g0_speed
             
@@ -71,36 +55,61 @@ class DrillingAnalysisEngine:
             
         return total_t
 
-    def compare_efficiency(self, current_params, initial_params, g0_speed=5000):
+    @classmethod
+    def compare_efficiency(cls, current_params, initial_params, cycle_type='G83', g0_speed=5000):
         """
-        比較兩組參數的加工效率。
+        比較兩組參數的加工效率 (支援 G83 與 G66)。
         
         Args:
-            current_params (dict): {ijk_list, feedrate, r_point, is_ijk_mode}
-            initial_params (dict): {ijk_list, feedrate, r_point, is_ijk_mode}
+            current_params (dict): 參數字典 (G83: {ijk_list, feedrate, r_point, is_ijk_mode}, G66: {segments, r_point})
+            initial_params (dict): 初始參數字典
+            cycle_type (str): 'G83' 或 'G66'
             g0_speed (float): 機台快速速度
             
         Returns:
-            dict: {time_save_pct, peck_change, init_time, curr_time}
+            dict: {save_pct, init_pecks, curr_pecks, init_time, curr_time}
         """
-        curr_t = self.calc_drilling_time(
-            current_params['ijk_list'], 
-            current_params['feedrate'], 
-            current_params['r_point'], 
-            g0_speed, 
-            current_params['is_ijk_mode']
-        )
-        
-        init_t = self.calc_drilling_time(
-            initial_params['ijk_list'], 
-            initial_params['feedrate'], 
-            initial_params['r_point'], 
-            g0_speed, 
-            initial_params['is_ijk_mode']
-        )
-        
-        curr_pecks = len(current_params['ijk_list'])
-        init_pecks = len(initial_params['ijk_list'])
+        if cycle_type == 'G66':
+            curr_segs = current_params.get('segments', [])
+            init_segs = initial_params.get('segments', [])
+            curr_r = current_params.get('r_point', 0.0)
+            init_r = initial_params.get('r_point', 0.0)
+            
+            curr_t = cls.calc_g66_drilling_time(curr_segs, curr_r, g0_speed)
+            init_t = cls.calc_g66_drilling_time(init_segs, init_r, g0_speed)
+            
+            # G66 實質刀數: 將每一段深度除以 J 數值向上取整的總和
+            def count_g66_pecks(segs, r_pt):
+                count = 0
+                prev_z = r_pt
+                for seg in segs:
+                    seg_z, seg_q = seg['I'], abs(seg['J'])
+                    if seg_q > 1e-6:
+                        count += max(1, math.ceil(abs(seg_z - prev_z) / seg_q))
+                    prev_z = seg_z
+                return count
+                
+            curr_pecks = count_g66_pecks(curr_segs, curr_r)
+            init_pecks = count_g66_pecks(init_segs, init_r)
+        else:
+            curr_t = cls.calc_drilling_time(
+                current_params['ijk_list'], 
+                current_params['feedrate'], 
+                current_params['r_point'], 
+                g0_speed, 
+                current_params['is_ijk_mode']
+            )
+            
+            init_t = cls.calc_drilling_time(
+                initial_params['ijk_list'], 
+                initial_params['feedrate'], 
+                initial_params['r_point'], 
+                g0_speed, 
+                initial_params['is_ijk_mode']
+            )
+            
+            curr_pecks = len(current_params['ijk_list'])
+            init_pecks = len(initial_params['ijk_list'])
         
         save_pct = 0.0
         if init_t > 0 and init_t != float('inf') and curr_t != float('inf'):
@@ -149,8 +158,8 @@ class DrillingAnalysisEngine:
             return "DEEP_PROTECT" # 極高風險：深孔保護模式
 
     @staticmethod
-    def calc_dynamic_pecks(i_val, k_val, target_depth, power=0.6):
-        """使用冪次衰減模型生成動態 Peck 序列"""
+    def calc_g83_dynamic_pecks(i_val, k_val, target_depth, power=0.6):
+        """[G83 專用] 使用冪次衰減模型生成動態 Peck 序列"""
         pecks = []
         current_depth = 0.0
         last_peck = i_val
@@ -261,32 +270,26 @@ class DrillingAnalysisEngine:
     # =========================================================================
 
     @classmethod
-    def calc_g66_segments(cls, tool_dia, target_z, base_feed, strategy='IJK_DYNAMIC', config=None):
+    def calc_g66_segments(cls, tool_dia, target_z, base_feed, strategy='IJK_DYNAMIC',
+                          config=None, material_key='SUS420', preset='balanced'):
         """
-        [G66 P9131 專用] 根據深度與風險計算分段鑽孔參數。
+        [G66 P9131 專用] 根據深度、材質與預設檔計算分段鑽孔參數。
         
-        與 G83 的差異：
-        - G83 的 get_ld_sens_ijk 回傳 (初始深度, 遞減量, 最小深度)
-        - 本方法回傳分段列表，每段包含：
-          I = 該段結束的 Z 座標位置 (絕對值)
-          J = 該段每次啄鑽量 (類似 G83 的 Q)
-          K = 該段進給速度 (F 值)
-        
-        Args:
-            tool_dia: 刀具直徑
-            target_z: 目標 Z 深度 (負值)
-            base_feed: 基礎進給速度 (已由引擎計算)
-            strategy: 風險策略 (DIRECT/Q_MODE/IJK_DYNAMIC/DEEP_PROTECT)
-            config: ConfigManager 實例
-            
-        Returns:
-            list: [{'I': z_pos, 'J': peck_amount, 'K': feed_rate}, ...]
+        改進 1：首段加速、深段減速的進給策略
+        改進 2：材質感知的啄鑽深度係數
+        改進 4：差比數列動態分段比例
+        改進 5：預設檔修正係數
         """
         total_depth = abs(target_z)
         if total_depth < 1e-6 or tool_dia <= 0:
             return []
         
         ld_ratio = total_depth / tool_dia
+        
+        # --- 讀取預設檔係數 [改進 5] ---
+        preset_data = {'peck_mult': 1.0, 'feed_mult': 1.0, 'seg_adj': 0}
+        if config:
+            preset_data = config.data.get('optimization_presets', {}).get(preset, preset_data)
         
         # --- 1. 決定分段數量 (依長徑比，最多 4 段) ---
         if ld_ratio <= 2.0:
@@ -302,17 +305,20 @@ class DrillingAnalysisEngine:
         if strategy == 'DEEP_PROTECT' and num_segments < 4:
             num_segments += 1
         
-        # --- 2. 計算每段的 Z 座標位置 (I 值) ---
-        # 採用遞減分配：越深的段落越短 (排屑困難，需更頻繁退刀)
-        # 例如 3 段比例 = [0.4, 0.35, 0.25]
+        # [改進 5] 預設檔調整段數
+        num_segments = max(1, min(4, num_segments + preset_data.get('seg_adj', 0)))
+        
+        # --- 2. 計算每段的 Z 座標位置 (I 值) [改進 4：差比數列] ---
         if num_segments == 1:
             ratios = [1.0]
-        elif num_segments == 2:
-            ratios = [0.55, 0.45]
-        elif num_segments == 3:
-            ratios = [0.40, 0.35, 0.25]
-        else:  # 4 段
-            ratios = [0.35, 0.30, 0.20, 0.15]
+        else:
+            # 讀取材質專屬公比，易切削材質公比大 → 首段更長
+            common_ratio = 0.70  # 預設
+            if config:
+                common_ratio = config.data.get('segment_common_ratios', {}).get(material_key, 0.70)
+            raw = [common_ratio ** i for i in range(num_segments)]
+            total = sum(raw)
+            ratios = [r / total for r in raw]  # 歸一化
         
         # 累積計算每段的 Z 位置
         z_positions = []
@@ -323,31 +329,50 @@ class DrillingAnalysisEngine:
         # 最後一段強制對齊 target_z，避免浮點誤差
         z_positions[-1] = round(target_z, 4)
         
-        # --- 3. 計算每段的啄鑽量 (J 值) ---
-        # 首段最大 (≈ 0.8D ~ 1.0D)，逐段遞減
-        # 注意：這裡的 J 是「每次啄鑽的深度」，不是 G83 的「遞減量」
-        base_peck = tool_dia * 0.8  # 首段基礎啄鑽量
+        # --- 3. 計算每段的啄鑽量 (J 值) [改進 2：材質感知] ---
+        peck_material_factor = 1.0
+        if config:
+            peck_material_factor = config.data.get('peck_factors', {}).get(material_key, 1.0)
+        
+        base_peck = tool_dia * 0.8 * peck_material_factor * preset_data.get('peck_mult', 1.0)
         if strategy == 'DEEP_PROTECT':
             base_peck *= 0.7  # 保護模式縮減
         
         # 限制啄鑽量：不超過該段深度，不低於 0.05mm
         min_peck = max(0.05, tool_dia * 0.1)
         
-        # --- 4. 計算每段的進給速度 (K 值) ---
-        # 首段使用基礎進給，逐段降低
-        # 注意：這裡的 K 是「進給速度 F」，不是 G83 的「最小啄鑽深度」
-
+        # --- 4. 計算每段的進給速度 (K 值) [改進 1：首段加速策略] ---
+        feed_preset_mult = preset_data.get('feed_mult', 1.0)
+        
         segments = []
         for i in range(num_segments):
-            # 深度衰減係數：越深的段，啄鑽量和進給越低
-            depth_factor = 1.0 - (i / num_segments) * 0.4  # 0.6 ~ 1.0
+            # [改進 1] 首段加速、深段減速
+            if num_segments == 1:
+                feed_factor = 1.0
+            elif i == 0:
+                feed_factor = 1.15   # 首段：排屑佳，加速 15%
+            elif i < num_segments - 1:
+                feed_factor = 1.0    # 中段：基準速度
+            else:
+                feed_factor = 0.75   # 末段：深孔減速 25%
+            
+            # 深度衰減係數：越深的段，啄鑽量越低
+            peck_decay = 1.0 - (i / max(num_segments, 1)) * 0.4
             
             # J：該段啄鑽量
             seg_depth = total_depth * ratios[i]
-            peck = round(max(min_peck, min(base_peck * depth_factor, seg_depth)), 4)
+            peck = round(max(min_peck, min(base_peck * peck_decay, seg_depth)), 4)
             
-            # K：該段進給速度
-            feed = round(base_feed * depth_factor, 1)
+            # --- [新增] 諧波對齊優化 ---
+            # 針對 G66 的每一個分段單獨做整除對齊 (最多往下微調 15%)
+            peck = cls._optimize_harmonic_peck(
+                target_depth=abs(z_positions[i] - (z_positions[i-1] if i > 0 else 0)),
+                current_peck=peck,
+                min_allowable_peck=peck * 0.85
+            )
+            
+            # K：該段進給速度 = 基礎進給 × 段位係數 × 預設檔係數
+            feed = round(base_feed * feed_factor * feed_preset_mult, 1)
             
             segments.append({
                 'I': z_positions[i],   # Z 座標位置 (絕對值，負數)
@@ -357,12 +382,106 @@ class DrillingAnalysisEngine:
         
         return segments
 
+    @staticmethod
+    def calc_g66_drilling_time(segments, r_point, g0_speed=5000, clearance=0.1):
+        """
+        [改進 3] G66 P9131 專用時間預估。
+        每段：快速下壓 → 在段內進行多次啄鑽 → 退刀至 R。
+        
+        Args:
+            segments: [{'I': z_pos, 'J': peck_amount, 'K': feed_rate}, ...]
+            r_point: R 安全點 Z 座標
+            g0_speed: 快速移動速度 (mm/min)
+            clearance: 啄鑽間雙 (mm)
+        
+        Returns:
+            float: 預估加工時間 (minutes)
+        """
+        if not segments or g0_speed <= 0:
+            return 0.0
+        
+        total_t = 0.0
+        prev_seg_end = r_point  # 起始點
+        
+        for seg in segments:
+            seg_z = seg['I']       # 段終點 Z
+            seg_q = abs(seg['J'])  # 啄鑽量
+            seg_f = seg['K']       # 進給速度
+            
+            if seg_q < 1e-6 or seg_f < 1e-6:
+                continue
+            
+            seg_depth = abs(seg_z - prev_seg_end)
+            num_pecks = max(1, math.ceil(seg_depth / seg_q))
+            
+            current_z = prev_seg_end
+            for p in range(num_pecks):
+                peck_end = max(current_z - seg_q, seg_z) if seg_z < current_z else min(current_z + seg_q, seg_z)
+                actual_peck = abs(peck_end - current_z)
+                
+                if p == 0:
+                    # 段內首跳：從 R 點進給下壓
+                    total_t += abs(current_z - r_point) / g0_speed  # 快速接近
+                    total_t += actual_peck / seg_f                   # 進給切削
+                else:
+                    # 段內後續跳：退到 R → 快速接近 → 進給切削
+                    total_t += abs(current_z - clearance - r_point) / g0_speed  # 快速接近
+                    total_t += (actual_peck + clearance) / seg_f                # 進給切削
+                
+                # 退刀至 R
+                total_t += abs(peck_end - r_point) / g0_speed
+                current_z = peck_end
+            
+            prev_seg_end = seg_z
+        
+        return total_t
+
+    @staticmethod
+    def _optimize_harmonic_peck(target_depth, current_peck, min_allowable_peck, precision=2):
+        """
+        微調最佳化 (Efficiency Optimization)：往下尋找在「不增加總加工次數」前提下，
+        最小的 Q 或 J 值，以達到最高加工效率 (減少每次空行程回刀的累積總和)。
+        
+        Args:
+            target_depth: 該段要鑽的總深度 (絕對值)，如 G83 應為 Z 扣除 R 的距離。
+            current_peck: AI 算出來的初始單次啄鑽量 (Q 或是 J)
+            min_allowable_peck: 允許縮小到的底線 (通常是不低於原始值的 85%)
+            precision: 機台與 GUI 輸入框的小數點精度限制 (預設為 2)
+        
+        Returns:
+            float: 最佳化後、符合精度限制的最小啄鑽量。若找不到更優值則回傳原本的數值。
+        """
+        if current_peck <= 0 or target_depth <= 0:
+            return current_peck
+            
+        # 若本來就大於總深，代表一刀到底，不需要優化
+        if current_peck >= target_depth:
+            return round(target_depth, precision)
+            
+        # 1. 計算用當前深度需要幾次 (採無條件進位)
+        n_steps = math.ceil(target_depth / current_peck)
+        
+        # 2. 如果不變刀數，數學上每一刀的完美除數是多少
+        exact_min_peck = target_depth / n_steps
+        
+        # 3. 礙於機台或 GUI 精度限制，若遇到無法除盡或過長的小數會被捨去，導致不足以鑽完而多出一刀(效率大跌)
+        # 所以對最佳數值進行精度上的無條件「進位」(Ceiling)。
+        # 這樣即可得出：在該精度下，能夠用 n_steps 鑽完的「最小可行 Q 值」
+        multiplier = 10.0 ** precision
+        best_peck = math.ceil(exact_min_peck * multiplier) / multiplier
+        
+        # 4. 如果算出來的 best_peck 能縮小深度且沒有越過最小安全界線，就採納
+        if best_peck < current_peck and best_peck >= min_allowable_peck:
+            return best_peck
+            
+        return current_peck
+
     @classmethod
     def calculate_optimized_params(cls, 
                                    tool_dia, 
                                    target_z, 
-                                   material_key, 
-                                   tool_mat_key, 
+                                   material_key='SUS304', 
+                                   tool_mat_key='CARBIDE', 
                                    max_rpm=40000, 
                                    current_s=0.0,
                                    material_thickness=0.0,
@@ -370,7 +489,8 @@ class DrillingAnalysisEngine:
                                    tip_angle=118.0,
                                    config=None,
                                    coolant_mode="MQL",
-                                   prefer_ijk=None):
+                                   prefer_ijk=None,
+                                   preset='balanced'):
         """計算最佳化切削參數 (進階工業模型版)"""
         result = {
             'S': 0.0, 'F': 0.0, 'Q': 0.0, 
@@ -474,7 +594,19 @@ class DrillingAnalysisEngine:
             else:
                 q_val = tool_dia * 0.8
                 min_q = config.get_limit('min_q') if config else 0.05
-                result['Q'] = round(max(q_val, min_q), 4)
+                q_val = max(q_val, min_q)
+                
+                # --- [新增] 諧波對齊優化 ---
+                # 在 G83 Q 模式，找尋能否整除總深度
+                optimized_q = cls._optimize_harmonic_peck(
+                    target_depth=depth, 
+                    current_peck=q_val, 
+                    min_allowable_peck=q_val * 0.85  # 最多往下縮小 15%
+                )
+                if optimized_q < q_val:
+                    result['messages'].append(f"諧波對齊：Q 值由 {round(q_val,4)} 微調至 {optimized_q} (除盡空行程)")
+                
+                result['Q'] = optimized_q
         else:
             # 進入 IJK 模式
             # --- G83 專用：計算初始/遞減/最小值 ---
@@ -492,7 +624,9 @@ class DrillingAnalysisEngine:
                 target_z=target_z,
                 base_feed=result['F'],
                 strategy=strategy,
-                config=config
+                config=config,
+                material_key=material_key,
+                preset=preset
             )
             
         # 5. 壽命預估 (V6.0 $V_{ref}$ 對齊)

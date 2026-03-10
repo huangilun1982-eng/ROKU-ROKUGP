@@ -29,7 +29,7 @@ class SettingsDialog(QDialog):
         # 2. 策略比例頁面
         self.tab_strategies = QWidget()
         self.setup_strategies_tab()
-        self.tabs.addTab(self.tab_strategies, "循環比例 (IJK Ratios)")
+        self.tabs.addTab(self.tab_strategies, "G83 循環比例 (IJK Ratios)")
         
         # 3. 其他限制頁面
         self.tab_limits = QWidget()

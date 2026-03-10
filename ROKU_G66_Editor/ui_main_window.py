@@ -210,13 +210,22 @@ class MainWindow(QMainWindow):
         # Buttons
         self.config_manager = ConfigManager()
         btn_smart_layout = QHBoxLayout()
-        self.btn_optimize = QPushButton("⚡ 自動切削參數")
+        self.btn_optimize = QPushButton("⚡ 自動參數")
         self.btn_optimize.setStyleSheet("""
             QPushButton { background-color: #28a745; color: white; font-weight: bold; padding: 6px; }
             QPushButton:hover { background-color: #218838; }
         """)
         self.btn_optimize.clicked.connect(self.on_optimize_clicked)
         btn_smart_layout.addWidget(self.btn_optimize)
+
+        # [新增] 單獨的微調按鈕：只微調 Q/J，不動 F
+        self.btn_refine_peck = QPushButton("🪄 微調 Q/J")
+        self.btn_refine_peck.setStyleSheet("""
+            QPushButton { background-color: #17a2b8; color: white; font-weight: bold; padding: 6px; }
+            QPushButton:hover { background-color: #138496; }
+        """)
+        self.btn_refine_peck.clicked.connect(self.on_refine_peck_clicked)
+        btn_smart_layout.addWidget(self.btn_refine_peck)
 
         self.btn_settings = QPushButton("⚙️ 選項")
         self.btn_settings.setFixedWidth(80)
@@ -227,7 +236,7 @@ class MainWindow(QMainWindow):
         self.btn_settings.clicked.connect(self.on_settings_clicked)
         btn_smart_layout.addWidget(self.btn_settings)
         
-        self.btn_rollback = QPushButton("↩️ 恢復原始參數")
+        self.btn_rollback = QPushButton("↩️ 原始參數")
         self.btn_rollback.setStyleSheet("""
             QPushButton { background-color: white; color: #dc3545; font-weight: bold; border: 1px solid #dc3545; padding: 6px; }
             QPushButton:hover { background-color: #f8d7da; }
@@ -656,22 +665,37 @@ class MainWindow(QMainWindow):
         
         if self.current_tool_index != -1:
             data = self.parsed_data[self.current_tool_index]
-            if data.get('cycle_type') == 'G83':
+            cycle_type = data.get('cycle_type', 'G66')
+            init_s = data.get('initial_static', {})
+            
+            if cycle_type == 'G83':
                 curr_p = {'ijk_list': ijk, 'feedrate': self.spin_f.value(), 'r_point': r_val, 'is_ijk_mode': data.get('use_ijk_mode', False)}
-                init_s = data.get('initial_static', {})
                 init_p = {'ijk_list': data.get('initial_dynamic', []), 'feedrate': init_s.get('F', 0.0), 'r_point': init_s.get('R', r_val), 'is_ijk_mode': data.get('initial_use_ijk_mode', False)}
-                res = self.analysis_engine.compare_efficiency(curr_p, init_p, self.spin_g0_speed.value())
-                self.grp_efficiency.setVisible(True)
-                peck_t = f"跳數變化: {res['init_pecks']} -> {res['curr_pecks']}"
-                if res['curr_pecks'] < res['init_pecks']: peck_t += f" (減少 {res['init_pecks'] - res['curr_pecks']} 次)"
-                elif res['curr_pecks'] > res['init_pecks']: peck_t += f" (增加 {res['curr_pecks'] - res['init_pecks']} 次)"
-                self.lbl_eff_pecks.setText(peck_t)
-                save = res['save_pct']
-                if save > 0.001: self.lbl_eff_time.setText(f"預估效率提升: {save:.1f} %"); self.lbl_eff_time.setStyleSheet("font-size: 15px; font-weight: bold; color: #28a745;")
-                elif save < -0.001: self.lbl_eff_time.setText(f"效率降低: {abs(save):.1f} %"); self.lbl_eff_time.setStyleSheet("font-size: 15px; font-weight: bold; color: #d9534f;")
-                else: self.lbl_eff_time.setText("預估效率不變: 0.0 %"); self.lbl_eff_time.setStyleSheet("font-size: 15px; font-weight: bold; color: #666;")
-            else: self.grp_efficiency.setVisible(False)
-        else: self.grp_efficiency.setVisible(False)
+            else:
+                # G66 模式：傳入 segments 進行對比
+                curr_p = {'segments': ijk, 'r_point': r_val}
+                init_p = {'segments': data.get('initial_dynamic', []), 'r_point': init_s.get('R', r_val)}
+                
+            res = self.analysis_engine.compare_efficiency(curr_p, init_p, cycle_type, self.spin_g0_speed.value())
+            self.grp_efficiency.setVisible(True)
+            
+            peck_t = f"跳數變化: {res['init_pecks']} -> {res['curr_pecks']}"
+            if res['curr_pecks'] < res['init_pecks']: peck_t += f" (減少 {res['init_pecks'] - res['curr_pecks']} 次)"
+            elif res['curr_pecks'] > res['init_pecks']: peck_t += f" (增加 {res['curr_pecks'] - res['init_pecks']} 次)"
+            self.lbl_eff_pecks.setText(peck_t)
+            
+            save = res['save_pct']
+            if save > 0.001: 
+                self.lbl_eff_time.setText(f"預估效率提升: {save:.1f} %")
+                self.lbl_eff_time.setStyleSheet("font-size: 15px; font-weight: bold; color: #28a745;")
+            elif save < -0.001: 
+                self.lbl_eff_time.setText(f"效率降低: {abs(save):.1f} %")
+                self.lbl_eff_time.setStyleSheet("font-size: 15px; font-weight: bold; color: #d9534f;")
+            else: 
+                self.lbl_eff_time.setText("預估效率不變: 0.0 %")
+                self.lbl_eff_time.setStyleSheet("font-size: 15px; font-weight: bold; color: #666;")
+        else:
+            self.grp_efficiency.setVisible(False)
 
     def save_file_as(self):
         if not self.parsed_data: return
@@ -795,8 +819,189 @@ class MainWindow(QMainWindow):
         # 觸發更新
         self.on_q_changed()
         self.update_internal_data()
+        
+        # 自動執行微調 (靜默模式：不彈出微調對話框)
+        self._run_refine_silent()
+        
         self.update_visualization()
-        QMessageBox.information(self, "成功", "參數已優化完成！")
+        QMessageBox.information(self, "成功", "參數已優化完成！（含自動微調 Q/J）")
+
+    def _run_refine_silent(self):
+        """
+        靜默執行微調邏輯 (不彈出對話框)。
+        供 on_optimize_clicked 內部使用，避免重複顯示訊息。
+        """
+        if self.current_tool_index == -1:
+            return
+            
+        data = self.parsed_data[self.current_tool_index]
+        cycle_type = data.get('cycle_type')
+        
+        z_val = self.spin_z.value()
+        r_val = self.spin_r.value()
+        target_depth = abs(z_val - r_val)
+        
+        if target_depth < 1e-6:
+            return
+
+        if cycle_type == "G83":
+            use_ijk = data.get('use_ijk_mode', False)
+            if not use_ijk:
+                # G83 Q 模式
+                current_q = self.spin_q.value()
+                if current_q > 0:
+                    optimized_q = DrillingAnalysisEngine._optimize_harmonic_peck(
+                        target_depth=target_depth, current_peck=current_q,
+                        min_allowable_peck=current_q * 0.85
+                    )
+                    if optimized_q < current_q:
+                        self.spin_q.blockSignals(True)
+                        self.spin_q.setValue(optimized_q)
+                        self.spin_q.blockSignals(False)
+                        data['Q'] = optimized_q
+                        self.on_q_changed()
+            else:
+                # G83 IJK 模式
+                current_i = self.spin_g83_i.value()
+                if current_i > 0:
+                    optimized_i = DrillingAnalysisEngine._optimize_harmonic_peck(
+                        target_depth=target_depth, current_peck=current_i,
+                        min_allowable_peck=current_i * 0.85
+                    )
+                    if optimized_i < current_i:
+                        self.spin_g83_i.blockSignals(True)
+                        self.spin_g83_i.setValue(optimized_i)
+                        self.spin_g83_i.blockSignals(False)
+                        self.on_q_changed()
+                        
+        elif cycle_type == "G66":
+            # G66: 微調表格內每個分段的 J
+            table_data = self.table_ijk.get_data()
+            new_table_data = []
+            prev_z = r_val
+            is_modified = False
+            
+            for seg in table_data:
+                seg_z = seg['I']
+                current_j = seg['J']
+                seg_depth = abs(seg_z - prev_z)
+                
+                if current_j > 0 and seg_depth > 0:
+                    optimized_j = DrillingAnalysisEngine._optimize_harmonic_peck(
+                        target_depth=seg_depth, current_peck=current_j,
+                        min_allowable_peck=current_j * 0.85
+                    )
+                    if optimized_j < current_j:
+                        seg['J'] = optimized_j
+                        is_modified = True
+                new_table_data.append(seg)
+                prev_z = seg_z
+                
+            if is_modified:
+                self.table_ijk.load_data(new_table_data)
+                self.update_internal_data()
+
+    def on_refine_peck_clicked(self):
+        """
+        [新增] 諧波對齊微調事件。
+        不改變 F 或 S，僅讀取當前的 Q 或 J 值並嘗試向下尋找整除值。
+        """
+        if self.current_tool_index == -1:
+            return
+            
+        data = self.parsed_data[self.current_tool_index]
+        cycle_type = data.get('cycle_type')
+        
+        # [精確修正] G83/G66 的實際鑽孔總深應為 Z 終點到 R 點的距離
+        z_val = self.spin_z.value()
+        r_val = self.spin_r.value()
+        target_depth = abs(z_val - r_val)
+        
+        if target_depth < 1e-6:
+            return
+
+        messages = []
+        is_modified = False
+
+        if cycle_type == "G83":
+            use_ijk = data.get('use_ijk_mode', False)
+            if not use_ijk:
+                # G83 Q 模式：微調 Q 值
+                current_q = self.spin_q.value()
+                if current_q > 0:
+                    optimized_q = DrillingAnalysisEngine._optimize_harmonic_peck(
+                        target_depth=target_depth, 
+                        current_peck=current_q, 
+                        min_allowable_peck=current_q * 0.85
+                    )
+                    if optimized_q < current_q:
+                        self.spin_q.blockSignals(True)
+                        self.spin_q.setValue(optimized_q)
+                        self.spin_q.blockSignals(False)
+                        
+                        data['Q'] = optimized_q
+                        self.on_q_changed()
+                        messages.append(f"✓ G83 Q 模式：Q 值 {current_q} 縮小至 {optimized_q}，已達到同刀數下最高效率。")
+                        is_modified = True
+                    else:
+                        messages.append("ℹ️ G83 Q 模式：當前 Q 值已在最佳效率點或不可再縮小。")
+            else:
+                # G83 IJK 模式：微調 I 值（初始啄鑽深度）
+                current_i = self.spin_g83_i.value()
+                if current_i > 0:
+                    optimized_i = DrillingAnalysisEngine._optimize_harmonic_peck(
+                        target_depth=target_depth,
+                        current_peck=current_i,
+                        min_allowable_peck=current_i * 0.85
+                    )
+                    if optimized_i < current_i:
+                        self.spin_g83_i.blockSignals(True)
+                        self.spin_g83_i.setValue(optimized_i)
+                        self.spin_g83_i.blockSignals(False)
+                        
+                        self.on_q_changed()
+                        messages.append(f"✓ G83 IJK 模式：I 值 {current_i} 縮小至 {optimized_i}，已達到同刀數下最高效率。")
+                        is_modified = True
+                    else:
+                        messages.append("ℹ️ G83 IJK 模式：當前 I 值已在最佳效率點或不可再縮小。")
+                    
+        elif cycle_type == "G66":
+            # G66: 微調表格內每個分段的 J
+            table_data = self.table_ijk.get_data()
+            new_table_data = []
+            prev_z = r_val  # 以 R 點為起始 (G66 各段 I 是絕對 Z 座標)
+            
+            for seg in table_data:
+                seg_z = seg['I']  # I 是絕對 Z 座標 (負值)，不取 abs
+                current_j = seg['J']
+                seg_depth = abs(seg_z - prev_z)  # 兩點之間的距離
+                
+                if current_j > 0 and seg_depth > 0:
+                    optimized_j = DrillingAnalysisEngine._optimize_harmonic_peck(
+                        target_depth=seg_depth,
+                        current_peck=current_j,
+                        min_allowable_peck=current_j * 0.85
+                    )
+                    if optimized_j < current_j:
+                        seg['J'] = optimized_j
+                        is_modified = True
+                new_table_data.append(seg)
+                prev_z = seg_z
+                
+            if is_modified:
+                # 重新載入表格
+                self.table_ijk.load_data(new_table_data)
+                # 更新內部屬性
+                self.update_internal_data()
+                messages.append("✓ G66 模式：已成功微調各分段的啄鑽量 (J) 達成整除對齊。")
+            else:
+                messages.append("ℹ️ G66 模式：當前分段 J 值已是最佳或無法在安全範圍內找到整除值。")
+
+        # 顯示結果並更新圖表
+        if messages:
+            title = "微調結果" if is_modified else "無需微調"
+            QMessageBox.information(self, title, "\n".join(messages))
+        self.update_visualization()
 
     def on_rollback_clicked(self):
         if self.current_tool_index == -1: return

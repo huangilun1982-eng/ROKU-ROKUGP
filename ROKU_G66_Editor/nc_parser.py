@@ -12,6 +12,7 @@ class RokuNCParser:
         self.nc_lines = []
         self.tools_data = []
         self.tool_diameters = {}
+        self.file_encoding = 'utf-8'  # 記錄讀取時使用的編碼
 
     def parse_file(self, file_path):
         """
@@ -24,9 +25,11 @@ class RokuNCParser:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 self.nc_lines = f.readlines()
+            self.file_encoding = 'utf-8'
         except UnicodeDecodeError:
             with open(file_path, 'r', encoding='cp950', errors='ignore') as f:
                 self.nc_lines = f.readlines()
+            self.file_encoding = 'cp950'
 
         self.tools_data = []
         self.tool_diameters = {}
@@ -521,6 +524,6 @@ class RokuNCParser:
         return True
 
     def save_file(self, output_path):
-        """將修改後的內容寫入檔案。"""
-        with open(output_path, 'w', encoding='utf-8') as f:
+        """將修改後的內容寫入檔案，使用與讀取時相同的編碼。"""
+        with open(output_path, 'w', encoding=self.file_encoding) as f:
             f.writelines(self.nc_lines)
