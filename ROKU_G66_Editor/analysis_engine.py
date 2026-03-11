@@ -213,17 +213,28 @@ class DrillingAnalysisEngine:
         return life_factor * depth_penalty * load_penalty
 
     @staticmethod
-    def get_ld_sens_ijk(diameter, ld_ratio):
-        """基於長徑比 L/D 計算感應式 I, J, K 基礎值 (V6.0 穩定性限制版)"""
-        r_eff = min(ld_ratio, 10.0) # [V6.0] 防止極深孔導致線性項崩壞
+    def get_ld_sens_ijk(diameter, ld_ratio, material_key='SUS420', coolant_factor=1.0, config=None):
+        """基於長徑比 L/D 與前置條件計算感應式 I, J, K 基礎值 (V6.2 高效首鑽版)"""
+        r_eff = min(ld_ratio, 10.0)
         r = r_eff
-        # [V6.1 修復] 大幅優化 IJK 效率，避免深孔 K 值過小導致退刀次數暴增
-        # I(R) = D * (1.2 - 0.05R), 限制 0.5D ~ 1.2D
-        i_factor = max(0.5, min(1.2, 1.2 - 0.05 * r))
-        # J(R) = D * (0.12 - 0.005R), 限制 0.02D ~ 0.12D (減緩遞減速度)
-        j_factor = max(0.02, min(0.12, 0.12 - 0.005 * r))
-        # K(R) = D * (0.40 - 0.015R), 限制 0.20D ~ 0.40D (保障最低深度)
-        k_factor = max(0.20, min(0.40, 0.40 - 0.015 * r))
+        
+        # 依據材質排屑性能取得修正係數 (預設 SUS420 為 1.0，AL6061 可能為 1.3)
+        mat_factor = 1.0
+        if config:
+            mat_factor = config.data.get('peck_factors', {}).get(material_key, 1.0)
+            
+        # 綜合環境紅利 (排屑越好、冷卻越佳 -> 第一刀可以越深)
+        env_bonus = mat_factor * coolant_factor
+        
+        # [V6.2 修復] 釋放 I (第一切削深度) 的封印
+        # 在絕佳條件下 (如鋁合金+全油)，第一刀可以達到 2D 到 3D
+        base_i_max = 3.0 * env_bonus
+        # I(R) 隨著深孔變保守，但給予更高的天花板 
+        i_factor = max(0.5, min(base_i_max, base_i_max - 0.15 * r))
+        
+        # J 遞減量保持平滑，K 保底深度受冷卻加持
+        j_factor = max(0.02, min(0.15, 0.15 - 0.005 * r))
+        k_factor = max(0.20, min(0.60 * env_bonus, 0.50 * env_factor - 0.015 * r)) if 'env_factor' in locals() else max(0.20, min(0.60 * env_bonus, 0.50 * env_bonus - 0.015 * r))
         
         return (round(diameter * i_factor, 3), 
                 round(diameter * j_factor, 3), 
@@ -627,10 +638,14 @@ class DrillingAnalysisEngine:
         else:
             # 進入 IJK 模式
             # --- G83 專用：計算初始/遞減/最小值 ---
-            i, j, k = cls.get_ld_sens_ijk(tool_dia, ld_ratio)
-            # 冷卻影響：散熱排屑差時需縮小每次下刀深度
-            i *= coolant_factor
-            k *= coolant_factor
+            i, j, k = cls.get_ld_sens_ijk(
+                diameter=tool_dia, 
+                ld_ratio=ld_ratio,
+                material_key=material_key,
+                coolant_factor=coolant_factor,
+                config=config
+            )
+            # 冷卻影響已在 get_ld_sens_ijk 內考量，這裡不重複疊加
             if strategy == "DEEP_PROTECT":
                 i *= 0.8; k *= 0.8
                 result['messages'].append("保護模式：額外縮減 Peck 深度")
