@@ -184,7 +184,7 @@ class DrillingAnalysisEngine:
         return pecks
 
     @staticmethod
-    def estimate_tool_life_index(vc_adj, vc_ref, tool_mat_key, ld_ratio, feed_ratio=1.0, config=None):
+    def estimate_tool_life_index(vc_adj, vc_ref, tool_mat_key, ld_ratio, feed_ratio=1.0, config=None, coolant_factor=1.0, use_ijk=False):
         """
         計算相對刀具壽命指標 (Tool Life Index)。
         基於 Taylor 公式修正。
@@ -193,12 +193,18 @@ class DrillingAnalysisEngine:
         if config:
             n = config.data.get('taylor_params', {}).get(tool_mat_key, {}).get('n', n)
             
-        # [V6.0] 速度因素 (與材質基準速度對比，語味化修正)
-        # LifeFactor = (V_ref / V_c)^(1/n)
-        life_factor = (vc_ref / vc_adj) ** (1.0 / n) if vc_adj > 0 else 0
+        # [V6.0+ 修復] 速度因素：將冷卻權重視為對「理想基準速度」的加成或懲罰
+        # 冷卻不佳(Air) -> 基準速度下放 -> 同樣的切削速度下壽命消耗加劇
+        effective_vc_ref = vc_ref * coolant_factor
+        life_factor = (effective_vc_ref / vc_adj) ** (1.0 / n) if vc_adj > 0 else 0
         
         # 2. 深度懲罰 (熱累積)
-        depth_penalty = 1.0 / (1.0 + 0.08 * (ld_ratio ** 1.3))
+        # 若啟用動態啄鑽 (IJK 模式)，能大幅改善深孔排屑，深度懲罰減半
+        depth_penalty_severity = 0.08
+        if use_ijk and ld_ratio > 3:
+            depth_penalty_severity = 0.04
+            
+        depth_penalty = 1.0 / (1.0 + depth_penalty_severity * (ld_ratio ** 1.3))
         
         # 3. 進給過載懲罰
         # 假設 feed_ratio > 1.0 代表過載
@@ -643,8 +649,23 @@ class DrillingAnalysisEngine:
             )
             
         # 5. 壽命預估 (V6.0 $V_{ref}$ 對齊)
-        life_idx = cls.estimate_tool_life_index(vc_final, vc_ref, tool_mat_key, ld_ratio, feed_ratio=feed_adj_factor, config=config)
+        # [修復] 必須使用實際的運作切削速度 (vc_actual)，而不只是演算法中途算出的 vc_final
+        actual_vc = (s_target * math.pi * tool_dia) / 1000.0
+        life_idx = cls.estimate_tool_life_index(
+            vc_adj=actual_vc, 
+            vc_ref=vc_ref, 
+            tool_mat_key=tool_mat_key, 
+            ld_ratio=ld_ratio, 
+            feed_ratio=feed_adj_factor, 
+            config=config, 
+            coolant_factor=coolant_factor,
+            use_ijk=final_use_ijk
+        )
         result['life_index'] = round(life_idx, 2)
+        
+        # 針對 IJK 模式添加系統提醒
+        if final_use_ijk and ld_ratio > 3:
+            result['messages'].append("保護模式：啟用 IJK 動態啄鑽，深孔壽命獲得提昇")
         
         # 6. 綜合評分 (時間與壽命權重)
         # 簡化評分：100 / (估計時間 * 0.7 + (1/壽命) * 0.3)
