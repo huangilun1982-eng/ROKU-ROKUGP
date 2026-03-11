@@ -596,7 +596,7 @@ class MainWindow(QMainWindow):
             return
             
         tool_mat = 'CARBIDE' if self.combo_tool_mat.currentText() == '鎢鋼 (Carbide)' else 'HSS'
-        work_mat = self.combo_material.currentData() or 'SUS420'
+        work_mat = self.combo_work_mat.currentData() or 'SUS420'
         base_meters = self.config.data.get('base_life_meters', {}).get(tool_mat, {}).get(work_mat, 20.0)
         
         self.spin_base_life_meters.blockSignals(True)
