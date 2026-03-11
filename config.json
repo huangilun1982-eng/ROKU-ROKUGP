@@ -54,6 +54,22 @@
         "micro_drill_threshold": 1.0,
         "micro_drill_penalty": 0.8
     },
+    "base_life_meters": {
+        "CARBIDE": {
+            "AL6061": 150.0,
+            "SUS304": 20.0,
+            "SUS420": 30.0,
+            "TI6AL4V": 15.0,
+            "CERAMIC": 8.0
+        },
+        "HSS": {
+            "AL6061": 80.0,
+            "SUS304": 8.0,
+            "SUS420": 12.0,
+            "TI6AL4V": 5.0,
+            "CERAMIC": 2.0
+        }
+    },
     "dri_factors": {
         "material": {
             "AL6061": 0.8,

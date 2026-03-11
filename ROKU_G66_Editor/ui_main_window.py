@@ -395,7 +395,37 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         self.plot_widget = DrillingPlot()
         self.plot_widget.peckSelected.connect(self.on_plot_peck_selected)
-        right_layout.addWidget(self.plot_widget)
+        right_layout.addWidget(self.plot_widget, stretch=1)
+        
+        # [新增] 刀具壽命分析面板
+        self.grp_life = QGroupBox("刀具壽命預估分析 (基於 NC 解析)")
+        self.grp_life.setStyleSheet("""
+            QGroupBox { border: 1px solid #0056b3; border-radius: 4px; margin-top: 1.5em; padding: 10px; background-color: #f8f9fa; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #0056b3; font-weight: bold; }
+        """)
+        life_layout = QFormLayout()
+        
+        self.spin_base_life_meters = QDoubleSpinBox()
+        self.spin_base_life_meters.setRange(0, 9999)
+        self.spin_base_life_meters.setSuffix(" 公尺")
+        self.spin_base_life_meters.valueChanged.connect(self.update_life_prediction)
+        self.lbl_base_life = QLabel("原廠基準壽命:")
+        life_layout.addRow(self.lbl_base_life, self.spin_base_life_meters)
+        
+        self.lbl_life_index = QLabel("Life Index: --")
+        self.lbl_est_total_holes = QLabel("等效預估總壽命: -- 穴")
+        self.lbl_consumption = QLabel("本程式預估消耗: -- %")
+        
+        # 樣式設定
+        self.lbl_est_total_holes.setStyleSheet("font-size: 14px; font-weight: bold; color: #333;")
+        self.lbl_consumption.setStyleSheet("font-size: 14px; font-weight: bold; color: #d32f2f;")
+        
+        life_layout.addRow(self.lbl_life_index)
+        life_layout.addRow(self.lbl_est_total_holes)
+        life_layout.addRow(self.lbl_consumption)
+        
+        self.grp_life.setLayout(life_layout)
+        right_layout.addWidget(self.grp_life)
         
         splitter.addWidget(right_panel)
         splitter.setSizes([200, 420, 600])
@@ -448,6 +478,10 @@ class MainWindow(QMainWindow):
         data = self.parsed_data[row]
         static, dynamic, cycle_type = data['static_params'], data['dynamic_params'], data.get('cycle_type', 'G66')
         self.lbl_cycle_type.setText(f"⚙ 循環類型: {cycle_type} " + ("深孔鑽" if cycle_type == 'G83' else "P9131"))
+        self._auto_load_base_life()
+        
+        # 載入基準壽命設定
+        self._auto_load_base_life()
         
         # --- 全面阻擋訊號以防止初始化過程中的資料競爭 ---
         controls = [
@@ -550,6 +584,79 @@ class MainWindow(QMainWindow):
             
         self.txt_nc_preview.setHtml(self.parser.generate_html(self.current_tool_index))
 
+    def _auto_load_base_life(self):
+        """依據刀具直徑與材質自動載入預設基準壽命"""
+        if self.current_tool_index == -1: return
+        data = self.parsed_data[self.current_tool_index]
+        if 'custom_base_life' in data:
+            # 使用者手動改過的話就套用
+            self.spin_base_life_meters.blockSignals(True)
+            self.spin_base_life_meters.setValue(data['custom_base_life'])
+            self.spin_base_life_meters.blockSignals(False)
+            return
+            
+        tool_mat = 'CARBIDE' if self.combo_tool_mat.currentText() == '鎢鋼 (Carbide)' else 'HSS'
+        work_mat = self.combo_material.currentData() or 'SUS420'
+        base_meters = self.config.data.get('base_life_meters', {}).get(tool_mat, {}).get(work_mat, 20.0)
+        
+        self.spin_base_life_meters.blockSignals(True)
+        self.spin_base_life_meters.setValue(base_meters)
+        self.spin_base_life_meters.blockSignals(False)
+
+    def _update_life_analysis_ui(self, analysis_result):
+        """更新分析面板中的 Life Index，並觸發總壽命預估計算"""
+        if not analysis_result:
+            self.lbl_life_index.setText("Life Index: --")
+            return
+        life_idx = analysis_result.get('life_index', 1.0)
+        self.lbl_life_index.setText(f"Life Index: {life_idx:.2f}")
+        
+        # 將運算結果存回 data 以便後續取用
+        if self.current_tool_index != -1:
+            self.parsed_data[self.current_tool_index]['current_life_index'] = life_idx
+            
+        self.update_life_prediction()
+
+    def update_life_prediction(self):
+        """依據基準距離、目前深度與孔數，計算等效穴數與消耗比例"""
+        if self.current_tool_index == -1: return
+        data = self.parsed_data[self.current_tool_index]
+        
+        # 記錄手動修改的基準壽命
+        base_meters = self.spin_base_life_meters.value()
+        data['custom_base_life'] = base_meters
+        
+        life_idx = data.get('current_life_index', 1.0)
+        hole_count = data.get('hole_count', 0)
+        
+        z_val = self.spin_z.value()
+        r_val = self.spin_r.value()
+        hole_depth = abs(z_val - r_val)
+        
+        if hole_depth < 0.001 or base_meters <= 0:
+            self.lbl_est_total_holes.setText("等效預估總壽命: -- 穴 (參數不足)")
+            self.lbl_consumption.setText("本程式預估消耗: -- %")
+            return
+            
+        # 計算：預估可切削總長度(mm) = 基準距離(m) * 1000 * 壽命係數
+        est_total_mm = (base_meters * 1000.0) * life_idx
+        # 等效總穴數
+        est_holes = est_total_mm / hole_depth
+        
+        self.lbl_est_total_holes.setText(f"等效預估總壽命: {int(est_holes)} 穴")
+        
+        if est_holes > 0 and hole_count > 0:
+            consumption = (hole_count / est_holes) * 100.0
+            color = "#d32f2f" if consumption > 50 else ("#f57c00" if consumption > 20 else "#2e7d32")
+            self.lbl_consumption.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {color};")
+            self.lbl_consumption.setText(f"本程式預估消耗: {consumption:.2f} % (共 {hole_count} 穴)")
+        else:
+            self.lbl_consumption.setStyleSheet("font-size: 14px; font-weight: bold; color: #333;")
+            if hole_count == 0:
+                self.lbl_consumption.setText("本程式預估消耗: 0 % (NC 檔無座標行)")
+            else:
+                self.lbl_consumption.setText(f"本程式預估消耗: -- % (共 {hole_count} 穴)")
+
     def on_param_changed(self):
         if self.current_tool_index == -1: return
         self.update_visualization()
@@ -649,6 +756,9 @@ class MainWindow(QMainWindow):
         
         # 呼叫 parser 更新原始行 (重要：回寫功能)
         self.parser.update_g66_line(self.current_tool_index, static, self.table_ijk.get_data())
+        
+        # 更新壽命預估
+        self.update_life_prediction()
         
         # [C3 修復] 無論 update_spindle_speed 是否成功，都同步 RPM 到資料結構
         rpm = self.spin_rpm.value()
@@ -825,6 +935,7 @@ class MainWindow(QMainWindow):
         self._run_refine_silent()
         
         self.update_visualization()
+        self._update_life_analysis_ui(result)
         QMessageBox.information(self, "成功", "參數已優化完成！（含自動微調 Q/J）")
 
     def _run_refine_silent(self):
