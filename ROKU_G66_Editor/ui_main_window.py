@@ -412,7 +412,8 @@ class MainWindow(QMainWindow):
             self.lbl_file.setText(os.path.basename(path))
             self.tool_list.clear()
             for item in self.parsed_data:
-                label = f"{item['tool_id']} (行 {item['line_index'] + 1})"
+                hole_count = item.get('hole_count', 0)
+                label = f"{item['tool_id']} (行 {item['line_index'] + 1}) - {hole_count} 穴"
                 self.tool_list.addItem(label)
             if self.parsed_data:
                 self.tool_list.setCurrentRow(0)
@@ -1013,11 +1014,19 @@ class MainWindow(QMainWindow):
             data = self.parsed_data[self.current_tool_index]
             init_s = data.get('initial_static', {})
             init_mode = data.get('initial_use_ijk_mode', False)
+            cycle_type = data.get('cycle_type', 'G66')
             
             # 還原各項數值 (加入 or 0.0 保護，防止 NoneType 崩潰)
-            self.spin_r.blockSignals(True); self.spin_r.setValue(init_s.get('R', 0.0) or 0.0); self.spin_r.blockSignals(False)
+            r_val = init_s.get('R', 0.0) or 0.0
+            self.spin_r.blockSignals(True); self.spin_r.setValue(r_val); self.spin_r.blockSignals(False)
             self.spin_z.blockSignals(True); self.spin_z.setValue(init_s.get('Z', 0.0) or 0.0); self.spin_z.blockSignals(False)
-            self.spin_s.blockSignals(True); self.spin_s.setValue(init_s.get('S', 0.0) or 0.0); self.spin_s.blockSignals(False)
+            
+            # [修正] G66 的 S 是 Approach Z，若原始未設定 (None) 應預設為 R 值
+            s_val = init_s.get('S')
+            if s_val is None and cycle_type == 'G66':
+                s_val = r_val  # G66 的 S 預設為 R
+            self.spin_s.blockSignals(True); self.spin_s.setValue(s_val or 0.0); self.spin_s.blockSignals(False)
+            
             self.spin_t.blockSignals(True); self.spin_t.setValue(init_s.get('T', 0.0) or 0.0); self.spin_t.blockSignals(False)
             self.spin_f.blockSignals(True); self.spin_f.setValue(init_s.get('F', 0.0) or 0.0); self.spin_f.blockSignals(False)
             self.spin_q.blockSignals(True); self.spin_q.setValue(init_s.get('Q', 0.0) or 0.0); self.spin_q.blockSignals(False)
@@ -1031,10 +1040,13 @@ class MainWindow(QMainWindow):
             self.spin_rpm.blockSignals(True); self.spin_rpm.setValue(init_rpm); self.spin_rpm.blockSignals(False)
             data['rpm'] = init_rpm
             
-            # 還原模式
+            # [修正] 還原模式時禁止信號，避免觸發 on_cycle_type_changed
             idx = 1 if init_mode else 0
-            if self.combo_cycle.currentIndex() != idx:
-                self.combo_cycle.setCurrentIndex(idx)
+            self.combo_cycle.blockSignals(True)
+            self.combo_cycle.setCurrentIndex(idx)
+            self.combo_cycle.blockSignals(False)
+            # 手動同步 use_ijk_mode（因為信號被阻止了）
+            data['use_ijk_mode'] = init_mode
             
             # 3. 重要：還原 G66 的動態 IJK 列表 (如果有的話)
             init_dynamic = data.get('initial_dynamic', [])

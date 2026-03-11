@@ -38,6 +38,10 @@ class RokuNCParser:
         # State Tracking：模擬 CNC 控制器，逐行追蹤主軸轉速狀態
         current_spindle_rpm = 0   # 當前主軸轉速值
         current_spindle_line = -1  # 該轉速 S 指令所在的確切行號
+        
+        # [新增] 循環模態狀態追蹤：計算孔數
+        in_cycle_mode = False
+        current_cycle_data = None
 
         for idx, line in enumerate(self.nc_lines):
             # 追蹤主軸轉速狀態（注意：G66 行內的 S 是 Approach Z，不是 RPM）
@@ -56,11 +60,38 @@ class RokuNCParser:
                     self.tool_diameters[found_id] = dia
                 current_tool = found_id
 
+            # [新增] 取消模態判斷
+            if in_cycle_mode:
+                if re.search(r'(G80|G67|M06|M30)', line) or re.search(r'T\d+', line):
+                    in_cycle_mode = False
+                    current_cycle_data = None
+                elif re.search(r'G0?[0123]\b', line):
+                    # 若因為更換插補模式 (如 G1) 導致自動脫離循環
+                    in_cycle_mode = False
+                    current_cycle_data = None
+
             # 偵測 G66 P9131 或 G83 循環指令
+            is_cycle_line = False
             if 'G66' in line and 'P9131' in line:
                 self._parse_g66_line(idx, line, current_tool, current_spindle_rpm, current_spindle_line)
+                is_cycle_line = True
             elif 'G83' in line:
                 self._parse_fixed_cycle_line(idx, line, current_tool, current_spindle_rpm, current_spindle_line)
+                is_cycle_line = True
+                
+            # [新增] 孔數累加邏輯
+            if is_cycle_line:
+                in_cycle_mode = True
+                current_cycle_data = self.tools_data[-1]
+                # 判斷宣告行是否帶有座標
+                if re.search(r'[XY]\s*[-+]?(?:\d*\.\d+|\d+)', line):
+                    current_cycle_data['hole_count'] = 1
+                else:
+                    current_cycle_data['hole_count'] = 0
+            elif in_cycle_mode and current_cycle_data:
+                # 若處於循環模態且非宣告行，尋找座標並累加 (排除註解行)
+                if not line.strip().startswith('(') and re.search(r'[XY]\s*[-+]?(?:\d*\.\d+|\d+)', line):
+                    current_cycle_data['hole_count'] += 1
 
         return self.tools_data
 
