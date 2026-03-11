@@ -83,11 +83,11 @@ class RokuNCParser:
             if is_cycle_line:
                 in_cycle_mode = True
                 current_cycle_data = self.tools_data[-1]
-                # 判斷宣告行是否帶有座標
-                if re.search(r'[XY]\s*[-+]?(?:\d*\.\d+|\d+)', line):
-                    current_cycle_data['hole_count'] = 1
-                else:
+                # 指令行本身即代表進行一次鑽孔動作 (除非帶有 K0 或 L0 僅做參數宣告)
+                if re.search(r'\b[KL]0\.?\b', line):
                     current_cycle_data['hole_count'] = 0
+                else:
+                    current_cycle_data['hole_count'] = 1
             elif in_cycle_mode and current_cycle_data:
                 # 若處於循環模態且非宣告行，尋找座標並累加 (排除註解行)
                 if not line.strip().startswith('(') and re.search(r'[XY]\s*[-+]?(?:\d*\.\d+|\d+)', line):
