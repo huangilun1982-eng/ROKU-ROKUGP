@@ -192,30 +192,31 @@ class DrillingAnalysisEngine:
     def estimate_tool_life_index(vc_adj, vc_ref, tool_mat_key, ld_ratio, feed_ratio=1.0, config=None, coolant_factor=1.0, use_ijk=False):
         """
         計算相對刀具壽命指標 (Tool Life Index)。
-        基於 Taylor 公式修正。
+        基於 Taylor 公式修正，結果 clamp 在 [0, 10.0] 範圍內。
         """
         n = 0.22 if tool_mat_key == 'CARBIDE' else 0.10
         if config:
             n = config.data.get('taylor_params', {}).get(tool_mat_key, {}).get('n', n)
             
-        # [V6.0+ 修復] 速度因素：將冷卻權重視為對「理想基準速度」的加成或懲罰
-        # 冷卻不佳(Air) -> 基準速度下放 -> 同樣的切削速度下壽命消耗加劇
+        # 1. 速度因素
         effective_vc_ref = vc_ref * coolant_factor
         life_factor = (effective_vc_ref / vc_adj) ** (1.0 / n) if vc_adj > 0 else 0
         
         # 2. 深度懲罰 (熱累積)
-        # 若啟用動態啄鑽 (IJK 模式)，能大幅改善深孔排屑，深度懲罰減半
         depth_penalty_severity = 0.08
         if use_ijk and ld_ratio > 3:
             depth_penalty_severity = 0.04
-            
         depth_penalty = 1.0 / (1.0 + depth_penalty_severity * (ld_ratio ** 1.3))
         
         # 3. 進給過載懲罰
-        # 假設 feed_ratio > 1.0 代表過載
         load_penalty = (1.0 / feed_ratio) ** 0.4 if feed_ratio > 0 else 0
         
-        return life_factor * depth_penalty * load_penalty
+        raw_index = life_factor * depth_penalty * load_penalty
+        
+        # [L1 修復] 物理上限 clamp：Taylor 公式在速度比過大時指數爆炸，
+        # 實際壽命不可能無限延長（振動、排屑、磨損等其他失效模式會接管）
+        # 上限 10.0 = 最優條件下也不超過基準壽命的 10 倍
+        return min(raw_index, 10.0)
 
     @staticmethod
     def get_ld_sens_ijk(diameter, ld_ratio, material_key='SUS420', coolant_factor=1.0, config=None):
@@ -594,6 +595,12 @@ class DrillingAnalysisEngine:
             
             
         vc_ref = mat_data['Vc'] * tool_data['speed_ratio']
+        # [L3 修復] 微鑽切速修正：D<1mm 時，教科書的參考切速是給大直徑鑽頭用的
+        # 微鑽散熱差、振動大，最佳切速要大幅折減
+        if tool_dia < 1.0:
+            micro_vc_factor = max(0.3, tool_dia)  # D=0.65 → ×0.65, D=0.1 → ×0.3
+            vc_ref *= micro_vc_factor
+            result['messages'].append(f"微鑽修正：參考切速折減至 {round(vc_ref, 1)} m/min (×{micro_vc_factor:.2f})")
         vc_base = vc_ref * coolant_factor
         # [V6.0] 隨長徑比調整 RPM 與 Feed，修正系數優化為 0.035
         rpm_adj_factor = 1.0 / (1.0 + 0.035 * ld_ratio)
