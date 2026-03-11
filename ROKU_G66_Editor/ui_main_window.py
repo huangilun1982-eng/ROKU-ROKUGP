@@ -413,7 +413,7 @@ class MainWindow(QMainWindow):
         life_layout.addRow(self.lbl_base_life, self.spin_base_life_meters)
         
         self.lbl_life_index = QLabel("Life Index: --")
-        self.lbl_est_total_holes = QLabel("等效預估總壽命: -- 穴")
+        self.lbl_est_total_holes = QLabel("等效預估總壽命: -- 孔")
         self.lbl_consumption = QLabel("本程式預估消耗: -- %")
         
         # 樣式設定
@@ -443,7 +443,7 @@ class MainWindow(QMainWindow):
             self.tool_list.clear()
             for item in self.parsed_data:
                 hole_count = item.get('hole_count', 0)
-                label = f"{item['tool_id']} (行 {item['line_index'] + 1}) - {hole_count} 穴"
+                label = f"{item['tool_id']} (行 {item['line_index'] + 1}) - {hole_count} 孔"
                 self.tool_list.addItem(label)
             if self.parsed_data:
                 self.tool_list.setCurrentRow(0)
@@ -618,7 +618,7 @@ class MainWindow(QMainWindow):
         self.update_life_prediction()
 
     def update_life_prediction(self):
-        """依據基準距離、目前深度與孔數，計算等效穴數與消耗比例"""
+        """依據基準距離、目前深度與孔數，計算等效孔數與消耗比例"""
         if self.current_tool_index == -1: return
         data = self.parsed_data[self.current_tool_index]
         
@@ -634,28 +634,28 @@ class MainWindow(QMainWindow):
         hole_depth = abs(z_val - r_val)
         
         if hole_depth < 0.001 or base_meters <= 0:
-            self.lbl_est_total_holes.setText("等效預估總壽命: -- 穴 (參數不足)")
+            self.lbl_est_total_holes.setText("等效預估總壽命: -- 孔 (參數不足)")
             self.lbl_consumption.setText("本程式預估消耗: -- %")
             return
             
         # 計算：預估可切削總長度(mm) = 基準距離(m) * 1000 * 壽命係數
         est_total_mm = (base_meters * 1000.0) * life_idx
-        # 等效總穴數
+        # 等效總孔數
         est_holes = est_total_mm / hole_depth
         
-        self.lbl_est_total_holes.setText(f"等效預估總壽命: {int(est_holes)} 穴")
+        self.lbl_est_total_holes.setText(f"等效預估總壽命: {int(est_holes)} 孔")
         
         if est_holes > 0 and hole_count > 0:
             consumption = (hole_count / est_holes) * 100.0
             color = "#d32f2f" if consumption > 50 else ("#f57c00" if consumption > 20 else "#2e7d32")
             self.lbl_consumption.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {color};")
-            self.lbl_consumption.setText(f"本程式預估消耗: {consumption:.2f} % (共 {hole_count} 穴)")
+            self.lbl_consumption.setText(f"本程式預估消耗: {consumption:.2f} % (共 {hole_count} 孔)")
         else:
             self.lbl_consumption.setStyleSheet("font-size: 14px; font-weight: bold; color: #333;")
             if hole_count == 0:
                 self.lbl_consumption.setText("本程式預估消耗: 0 % (NC 檔無座標行)")
             else:
-                self.lbl_consumption.setText(f"本程式預估消耗: -- % (共 {hole_count} 穴)")
+                self.lbl_consumption.setText(f"本程式預估消耗: -- % (共 {hole_count} 孔)")
 
     def on_param_changed(self):
         if self.current_tool_index == -1: return
