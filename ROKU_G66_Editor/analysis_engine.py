@@ -488,7 +488,7 @@ class DrillingAnalysisEngine:
                                    exit_chamfer=0.0,
                                    tip_angle=118.0,
                                    config=None,
-                                   coolant_mode="MQL",
+                                   coolant_mode="Oil",
                                    prefer_ijk=None,
                                    preset='balanced'):
         """計算最佳化切削參數 (進階工業模型版)"""

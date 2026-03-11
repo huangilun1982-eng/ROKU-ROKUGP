@@ -185,9 +185,8 @@ class MainWindow(QMainWindow):
         form_smart.addRow("工件材質:", self.combo_work_mat)
 
         self.combo_coolant = QComboBox()
-        self.combo_coolant.addItem("油霧冷卻 (MQL)", "MQL")
-        self.combo_coolant.addItem("高壓内冷 (Internal)", "Internal")
-        self.combo_coolant.addItem("乾式切削 (Dry)", "Dry")
+        self.combo_coolant.addItem("全油切削液 (Oil Coolant)", "Oil")
+        self.combo_coolant.addItem("乾式吹氣冷卻 (Dry Air)", "Air")
         self.combo_coolant.setFixedWidth(200)
         form_smart.addRow("冷卻模式:", self.combo_coolant)
         
