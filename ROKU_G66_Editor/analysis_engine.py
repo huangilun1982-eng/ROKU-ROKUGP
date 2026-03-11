@@ -217,12 +217,13 @@ class DrillingAnalysisEngine:
         """基於長徑比 L/D 計算感應式 I, J, K 基礎值 (V6.0 穩定性限制版)"""
         r_eff = min(ld_ratio, 10.0) # [V6.0] 防止極深孔導致線性項崩壞
         r = r_eff
-        # I(R) = D * (1.2 - 0.08R), 限制 0.4D ~ 1.2D
-        i_factor = max(0.4, min(1.2, 1.2 - 0.08 * r))
-        # J(R) = D * (0.18 - 0.01R), 限制 0.04D ~ 0.18D
-        j_factor = max(0.04, min(0.18, 0.18 - 0.01 * r))
-        # K(R) = D * (0.25 - 0.01R), 限制 0.08D ~ 0.25D
-        k_factor = max(0.08, min(0.25, 0.25 - 0.01 * r))
+        # [V6.1 修復] 大幅優化 IJK 效率，避免深孔 K 值過小導致退刀次數暴增
+        # I(R) = D * (1.2 - 0.05R), 限制 0.5D ~ 1.2D
+        i_factor = max(0.5, min(1.2, 1.2 - 0.05 * r))
+        # J(R) = D * (0.12 - 0.005R), 限制 0.02D ~ 0.12D (減緩遞減速度)
+        j_factor = max(0.02, min(0.12, 0.12 - 0.005 * r))
+        # K(R) = D * (0.40 - 0.015R), 限制 0.20D ~ 0.40D (保障最低深度)
+        k_factor = max(0.20, min(0.40, 0.40 - 0.015 * r))
         
         return (round(diameter * i_factor, 3), 
                 round(diameter * j_factor, 3), 

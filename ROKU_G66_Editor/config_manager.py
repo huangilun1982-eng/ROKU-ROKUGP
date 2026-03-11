@@ -16,7 +16,7 @@ class ConfigManager:
             "CERAMIC":{"Vc": 15.0,  "fr_factor": 0.003, "desc": "工程陶瓷 (Ceramic)"}
         },
         'coolant_factors': {
-            'MQL': 0.8,        # 油霧：建議 Vc x 0.8
+            'Oil': 1.2, 'Air': 0.8,
             'Internal': 1.1,   # 內冷：建議 Vc x 1.1 (保守值)
             'Dry': 0.6         # 乾式：建議 Vc x 0.6
         },
@@ -36,7 +36,7 @@ class ConfigManager:
                 'AL6061': 0.8, 'SUS304': 1.4, 'SUS420': 1.2, 'TI6AL4V': 1.6, 'CERAMIC': 2.0
             },
             'coolant': {
-                'Internal': 0.75, 'MQL': 1.2, 'Dry': 1.6
+                'Oil': 0.8, 'Air': 1.3
             },
             'tool': {
                 'CARBIDE': 0.9, 'HSS': 1.4
