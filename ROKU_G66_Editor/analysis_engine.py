@@ -226,16 +226,32 @@ class DrillingAnalysisEngine:
         # 綜合環境紅利 (排屑越好、冷卻越佳 -> 第一刀可以越深)
         env_bonus = mat_factor * coolant_factor
         
-        # [V6.3 修復] 釋放 I (第一切削深度) 的封印
-        # 在絕佳條件下 (如鋁合金+全油)，第一刀可以達到 2D 到 3D
-        base_i_max = 3.0 * env_bonus
-        # I(R) 隨著深孔變保守，但給予更高的天花板 
-        i_factor = max(0.5, min(base_i_max, base_i_max - 0.15 * r))
+        # [V6.4] 基準首鑽倍數 (受環境紅利加成，但受刀徑分級天花板約束)
+        base_i_mult = 2.0 * env_bonus
+        # I 倍數隨深孔遞減 (每增 1 倍 L/D，倍數降 0.1)
+        i_factor = max(0.5, min(base_i_mult, base_i_mult - 0.1 * r))
         
-        # [P5 修復] 安全天花板：I 絕對不超過總深度的 50%、且不超過 2.5mm (微鑽保護)
-        abs_i_max = min(diameter * i_factor, 2.5)
+        # [P5 修復 V2] 安全天花板：依刀徑分級設定最大允許 I 倍數
+        # ┌──────────────┬───────────────┬──────────────────────────┐
+        # │ 刀徑區間      │ I 最大倍數    │ 理由                      │
+        # ├──────────────┼───────────────┼──────────────────────────┤
+        # │ D < 0.5mm    │ 1.5D          │ 奈米/微鑽極脆弱            │
+        # │ 0.5 ≤ D < 1  │ 2.0D          │ 微鑽，保守為上             │
+        # │ 1 ≤ D < 3    │ 2.5D          │ 小鑽，適度放寬             │
+        # │ D ≥ 3        │ 3.0D          │ 標準鑽頭，可較激進         │
+        # └──────────────┴───────────────┴──────────────────────────┘
+        if diameter < 0.5:
+            max_i_mult = 1.5
+        elif diameter < 1.0:
+            max_i_mult = 2.0
+        elif diameter < 3.0:
+            max_i_mult = 2.5
+        else:
+            max_i_mult = 3.0
+        
+        # 實際 I 值 = min(演算法算出值, 刀徑分級天花板)
         i_val_raw = diameter * i_factor
-        i_val_capped = min(i_val_raw, abs_i_max)
+        i_val_capped = min(i_val_raw, diameter * max_i_mult)
         
         # J 遞減量保持平滑，K 保底深度受冷卻加持
         j_factor = max(0.02, min(0.15, 0.15 - 0.005 * r))
