@@ -562,8 +562,8 @@ class DrillingAnalysisEngine:
             
         result['S'] = round(s_target, 0)
         
-        # 進給計算
-        fr_base = mat_data['fr_factor'] * tool_dia * tool_data['feed_ratio']
+        # 進給計算 (受冷卻條件影響)
+        fr_base = mat_data['fr_factor'] * tool_dia * tool_data['feed_ratio'] * coolant_factor
         # 微鑽保護 (額外疊加)
         micro_threshold = 1.0
         micro_penalty = 0.8
@@ -601,7 +601,8 @@ class DrillingAnalysisEngine:
             if strategy == "DIRECT" and dri < 4: 
                 result['Q'] = 0.0
             else:
-                q_val = tool_dia * 0.8
+                # 依據冷卻條件限制啄鑽深度 (冷卻越差 Q 越少)
+                q_val = tool_dia * 0.8 * coolant_factor
                 min_q = config.get_limit('min_q') if config else 0.05
                 q_val = max(q_val, min_q)
                 
@@ -620,6 +621,9 @@ class DrillingAnalysisEngine:
             # 進入 IJK 模式
             # --- G83 專用：計算初始/遞減/最小值 ---
             i, j, k = cls.get_ld_sens_ijk(tool_dia, ld_ratio)
+            # 冷卻影響：散熱排屑差時需縮小每次下刀深度
+            i *= coolant_factor
+            k *= coolant_factor
             if strategy == "DEEP_PROTECT":
                 i *= 0.8; k *= 0.8
                 result['messages'].append("保護模式：額外縮減 Peck 深度")

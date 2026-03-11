@@ -182,18 +182,21 @@ class MainWindow(QMainWindow):
         self.combo_work_mat.addItem("鈦合金 (Titanium)", "TI6AL4V")
         self.combo_work_mat.addItem("工程陶瓷 (Ceramic)", "CERAMIC")
         self.combo_work_mat.setFixedWidth(200)
+        self.combo_work_mat.currentIndexChanged.connect(self.on_param_changed) # [增加連動觸發]
         form_smart.addRow("工件材質:", self.combo_work_mat)
 
         self.combo_coolant = QComboBox()
         self.combo_coolant.addItem("全油切削液 (Oil Coolant)", "Oil")
         self.combo_coolant.addItem("乾式吹氣冷卻 (Dry Air)", "Air")
         self.combo_coolant.setFixedWidth(200)
+        self.combo_coolant.currentIndexChanged.connect(self.on_param_changed) # [增加連動觸發]
         form_smart.addRow("冷卻模式:", self.combo_coolant)
         
         self.combo_tool_mat = QComboBox()
         self.combo_tool_mat.addItem("鎢鋼 (Carbide)", "CARBIDE")
         self.combo_tool_mat.addItem("高速鋼 (HSS)", "HSS")
         self.combo_tool_mat.setFixedWidth(200)
+        self.combo_tool_mat.currentIndexChanged.connect(self.on_param_changed) # [增加連動觸發]
         form_smart.addRow("刀具材質:", self.combo_tool_mat)
         
         # Consolidated RPM Input (Replaces Max RPM Combo)
