@@ -226,17 +226,23 @@ class DrillingAnalysisEngine:
         # 綜合環境紅利 (排屑越好、冷卻越佳 -> 第一刀可以越深)
         env_bonus = mat_factor * coolant_factor
         
-        # [V6.2 修復] 釋放 I (第一切削深度) 的封印
+        # [V6.3 修復] 釋放 I (第一切削深度) 的封印
         # 在絕佳條件下 (如鋁合金+全油)，第一刀可以達到 2D 到 3D
         base_i_max = 3.0 * env_bonus
         # I(R) 隨著深孔變保守，但給予更高的天花板 
         i_factor = max(0.5, min(base_i_max, base_i_max - 0.15 * r))
         
+        # [P5 修復] 安全天花板：I 絕對不超過總深度的 50%、且不超過 2.5mm (微鑽保護)
+        abs_i_max = min(diameter * i_factor, 2.5)
+        i_val_raw = diameter * i_factor
+        i_val_capped = min(i_val_raw, abs_i_max)
+        
         # J 遞減量保持平滑，K 保底深度受冷卻加持
         j_factor = max(0.02, min(0.15, 0.15 - 0.005 * r))
-        k_factor = max(0.20, min(0.60 * env_bonus, 0.50 * env_factor - 0.015 * r)) if 'env_factor' in locals() else max(0.20, min(0.60 * env_bonus, 0.50 * env_bonus - 0.015 * r))
+        # [P6 修復] 統一使用 env_bonus (消除殘留的 env_factor)
+        k_factor = max(0.20, min(0.60 * env_bonus, 0.50 * env_bonus - 0.015 * r))
         
-        return (round(diameter * i_factor, 3), 
+        return (round(i_val_capped, 3), 
                 round(diameter * j_factor, 3), 
                 round(diameter * k_factor, 3))
 
@@ -580,8 +586,8 @@ class DrillingAnalysisEngine:
             
         result['S'] = round(s_target, 0)
         
-        # 進給計算 (受冷卻條件影響)
-        fr_base = mat_data['fr_factor'] * tool_dia * tool_data['feed_ratio'] * coolant_factor
+        # [P1 修復] 進給計算：coolant 已透過 S 間接影響，此處不再重複乘入
+        fr_base = mat_data['fr_factor'] * tool_dia * tool_data['feed_ratio']
         # 微鑽保護 (額外疊加)
         micro_threshold = 1.0
         micro_penalty = 0.8
@@ -619,8 +625,11 @@ class DrillingAnalysisEngine:
             if strategy == "DIRECT" and dri < 4: 
                 result['Q'] = 0.0
             else:
-                # 依據冷卻條件限制啄鑽深度 (冷卻越差 Q 越少)
-                q_val = tool_dia * 0.8 * coolant_factor
+                # [P4 修復] Q 模式導入材質排屑因子 (peck_factors)
+                peck_mat_factor = 1.0
+                if config:
+                    peck_mat_factor = config.data.get('peck_factors', {}).get(material_key, 1.0)
+                q_val = tool_dia * 0.8 * peck_mat_factor
                 min_q = config.get_limit('min_q') if config else 0.05
                 q_val = max(q_val, min_q)
                 
