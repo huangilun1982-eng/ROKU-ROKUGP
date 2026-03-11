@@ -7,6 +7,11 @@ class DrillingAnalysisEngine:
     """
     
     @staticmethod
+    def _precision_for_dia(diameter):
+        """依刀徑決定適當的小數位精度 (位數)"""
+        return 3 if diameter < 0.5 else 2
+    
+    @staticmethod
     def calc_drilling_time(ijk_list, feedrate, r_point, g0_speed, is_ijk_mode, clearance=0.1):
         """
         計算單一孔位的鑽孔循環預估時間。
@@ -253,14 +258,19 @@ class DrillingAnalysisEngine:
         i_val_raw = diameter * i_factor
         i_val_capped = min(i_val_raw, diameter * max_i_mult)
         
-        # J 遞減量保持平滑，K 保底深度受冷卻加持
+        # J 遞減量保持平滑
         j_factor = max(0.02, min(0.15, 0.15 - 0.005 * r))
-        # [P6 修復] 統一使用 env_bonus (消除殘留的 env_factor)
-        k_factor = max(0.20, min(0.60 * env_bonus, 0.50 * env_bonus - 0.015 * r))
+        # K 保底深度受冷卻加持
+        # [D 修復] K 最低保障：微鑽至少 0.5D，一般至少 0.3D
+        k_floor = 0.5 if diameter < 1.0 else 0.3
+        k_factor = max(k_floor, min(0.60 * env_bonus, 0.50 * env_bonus - 0.015 * r))
         
-        return (round(i_val_capped, 3), 
-                round(diameter * j_factor, 3), 
-                round(diameter * k_factor, 3))
+        # 依刀徑決定回傳精度
+        prec = 3 if diameter < 0.5 else 2
+        
+        return (round(i_val_capped, prec), 
+                round(diameter * j_factor, prec), 
+                round(diameter * k_factor, prec))
 
     @classmethod
     def get_default_ijk(cls, diameter, mode='efficient', config=None):
@@ -646,20 +656,36 @@ class DrillingAnalysisEngine:
                 if config:
                     peck_mat_factor = config.data.get('peck_factors', {}).get(material_key, 1.0)
                 q_val = tool_dia * 0.8 * peck_mat_factor
+                
+                # [C 修復] Q 分級天花板 (與 I 相同概念)
+                if tool_dia < 0.5:
+                    max_q_mult = 1.0
+                elif tool_dia < 1.0:
+                    max_q_mult = 1.5
+                elif tool_dia < 3.0:
+                    max_q_mult = 2.0
+                else:
+                    max_q_mult = 2.5
+                q_val = min(q_val, tool_dia * max_q_mult)
+                
                 min_q = config.get_limit('min_q') if config else 0.05
                 q_val = max(q_val, min_q)
+                
+                # [B 修復] 精度隨刀徑調整
+                prec = cls._precision_for_dia(tool_dia)
                 
                 # --- [新增] 諧波對齊優化 ---
                 # 在 G83 Q 模式，找尋能否整除總深度
                 optimized_q = cls._optimize_harmonic_peck(
                     target_depth=depth, 
                     current_peck=q_val, 
-                    min_allowable_peck=q_val * 0.85  # 最多往下縮小 15%
+                    min_allowable_peck=q_val * 0.85,
+                    precision=prec
                 )
                 if optimized_q < q_val:
-                    result['messages'].append(f"諧波對齊：Q 值由 {round(q_val,4)} 微調至 {optimized_q} (除盡空行程)")
+                    result['messages'].append(f"諧波對齊：Q 值由 {round(q_val, prec)} 微調至 {optimized_q} (除盡空行程)")
                 
-                result['Q'] = optimized_q
+                result['Q'] = round(optimized_q, prec)
         else:
             # 進入 IJK 模式
             # --- G83 專用：計算初始/遞減/最小值 ---

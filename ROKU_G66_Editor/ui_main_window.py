@@ -624,6 +624,13 @@ class MainWindow(QMainWindow):
             
         self.lbl_base_life_hint.setText(f"(建議 {size_category}: {base_meters} m)")
         
+        # [A 修復] 依刀徑動態調整 Q/I/J/K spinbox 的小數位數
+        # 微鑽 (D<0.5mm) 的參數值可能只有 0.00x，需要 3 位精度
+        prec = 3 if dia < 0.5 else 2
+        for sb in [self.spin_q, self.spin_g83_i, self.spin_g83_j, self.spin_g83_k]:
+            if sb.decimals() != prec:
+                sb.setDecimals(prec)
+        
         if 'custom_base_life' in data:
             # 使用者手動改過的話就套用
             self.spin_base_life_meters.blockSignals(True)
