@@ -346,15 +346,15 @@ class DrillingAnalysisEngine:
         
         segments = []
         for i in range(num_segments):
-            # [改進 1] 首段加速、深段減速
+            # [改進 1] 首段定心減速 (Center drilling effect)、深段保護減速
             if num_segments == 1:
                 feed_factor = 1.0
             elif i == 0:
-                feed_factor = 1.15   # 首段：排屑佳，加速 15%
+                feed_factor = 0.85   # 首段：降低軸向推力，確保定心不偏擺
             elif i < num_segments - 1:
-                feed_factor = 1.0    # 中段：基準速度
+                feed_factor = 1.0    # 中段：孔壁導引穩定，全速推進
             else:
-                feed_factor = 0.75   # 末段：深孔減速 25%
+                feed_factor = 0.80   # 末段：深孔保護，避免孔底積屑研磨
             
             # 深度衰減係數：越深的段，啄鑽量越低
             peck_decay = 1.0 - (i / max(num_segments, 1)) * 0.4
@@ -576,6 +576,15 @@ class DrillingAnalysisEngine:
             result['messages'].append(f"微鑽保護：F 加乘 {micro_penalty}")
             
         f_calc = s_target * (fr_base * feed_adj_factor)
+        
+        # [新增] 最低每轉進給率 (Min Feed per Tooth) 保障
+        # 避免 F 過低導致「只有摩擦沒有切削」而產生加工硬化 (特別針對不鏽鋼)
+        min_feed_per_rev = max(0.01, tool_dia * 0.01)  # 直徑的 1%，保底 0.01 mm/rev
+        f_rev = f_calc / s_target if s_target > 0 else 0
+        if f_rev < min_feed_per_rev and s_target > 0:
+            f_calc = s_target * min_feed_per_rev
+            result['messages'].append(f"進給保障：F 強制提升 (避免加工硬化)，每轉進給為 {min_feed_per_rev:.3f} mm/rev")
+            
         result['F'] = round(f_calc, 1)
         if ld_ratio > 3: result['messages'].append(f"深度修正：F 修正係數 {round(feed_adj_factor, 2)}")
 
