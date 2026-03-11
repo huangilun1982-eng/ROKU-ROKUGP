@@ -56,18 +56,78 @@
     },
     "base_life_meters": {
         "CARBIDE": {
-            "AL6061": 150.0,
-            "SUS304": 20.0,
-            "SUS420": 30.0,
-            "TI6AL4V": 15.0,
-            "CERAMIC": 8.0
+            "AL6061": {
+                "nano": 20.0,
+                "micro": 50.0,
+                "small": 100.0,
+                "medium": 150.0,
+                "large": 200.0
+            },
+            "SUS304": {
+                "nano": 2.0,
+                "micro": 5.0,
+                "small": 12.0,
+                "medium": 20.0,
+                "large": 30.0
+            },
+            "SUS420": {
+                "nano": 3.0,
+                "micro": 8.0,
+                "small": 18.0,
+                "medium": 30.0,
+                "large": 45.0
+            },
+            "TI6AL4V": {
+                "nano": 2.0,
+                "micro": 4.0,
+                "small": 10.0,
+                "medium": 15.0,
+                "large": 20.0
+            },
+            "CERAMIC": {
+                "nano": 1.0,
+                "micro": 2.0,
+                "small": 5.0,
+                "medium": 8.0,
+                "large": 12.0
+            }
         },
         "HSS": {
-            "AL6061": 80.0,
-            "SUS304": 8.0,
-            "SUS420": 12.0,
-            "TI6AL4V": 5.0,
-            "CERAMIC": 2.0
+            "AL6061": {
+                "nano": 10.0,
+                "micro": 25.0,
+                "small": 50.0,
+                "medium": 80.0,
+                "large": 120.0
+            },
+            "SUS304": {
+                "nano": 1.0,
+                "micro": 2.0,
+                "small": 5.0,
+                "medium": 8.0,
+                "large": 12.0
+            },
+            "SUS420": {
+                "nano": 1.5,
+                "micro": 3.0,
+                "small": 8.0,
+                "medium": 12.0,
+                "large": 18.0
+            },
+            "TI6AL4V": {
+                "nano": 0.5,
+                "micro": 1.5,
+                "small": 3.0,
+                "medium": 5.0,
+                "large": 8.0
+            },
+            "CERAMIC": {
+                "nano": 0.5,
+                "micro": 1.0,
+                "small": 1.5,
+                "medium": 2.0,
+                "large": 3.0
+            }
         }
     },
     "dri_factors": {

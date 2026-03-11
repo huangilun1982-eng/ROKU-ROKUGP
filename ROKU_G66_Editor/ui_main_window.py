@@ -410,7 +410,16 @@ class MainWindow(QMainWindow):
         self.spin_base_life_meters.setSuffix(" 公尺")
         self.spin_base_life_meters.valueChanged.connect(self.update_life_prediction)
         self.lbl_base_life = QLabel("原廠基準壽命:")
-        life_layout.addRow(self.lbl_base_life, self.spin_base_life_meters)
+        
+        self.lbl_base_life_hint = QLabel("(系統建議: -- 公尺)")
+        self.lbl_base_life_hint.setStyleSheet("color: #777; font-size: 12px;")
+        
+        base_life_h_layout = QHBoxLayout()
+        base_life_h_layout.setContentsMargins(0, 0, 0, 0)
+        base_life_h_layout.addWidget(self.spin_base_life_meters)
+        base_life_h_layout.addWidget(self.lbl_base_life_hint)
+        
+        life_layout.addRow(self.lbl_base_life, base_life_h_layout)
         
         self.lbl_life_index = QLabel("Life Index: --")
         self.lbl_est_total_holes = QLabel("等效預估總壽命: -- 孔")
@@ -588,17 +597,38 @@ class MainWindow(QMainWindow):
         """依據刀具直徑與材質自動載入預設基準壽命"""
         if self.current_tool_index == -1: return
         data = self.parsed_data[self.current_tool_index]
+        
+        dia = self.spin_tool_dia.value()
+        size_category = "medium"
+        if dia < 0.5:
+            size_category = "nano"
+        elif dia < 3.0:
+            size_category = "micro"
+        elif dia < 6.0:
+            size_category = "small"
+        elif dia < 12.0:
+            size_category = "medium"
+        else:
+            size_category = "large"
+            
+        tool_mat = 'CARBIDE' if self.combo_tool_mat.currentText() == '鎢鋼 (Carbide)' else 'HSS'
+        work_mat = self.combo_work_mat.currentData() or 'SUS420'
+        mat_config = self.config_manager.data.get('base_life_meters', {}).get(tool_mat, {}).get(work_mat, 20.0)
+        
+        if isinstance(mat_config, dict):
+            base_meters = mat_config.get(size_category, 20.0)
+        else:
+            base_meters = float(mat_config)
+            
+        self.lbl_base_life_hint.setText(f"(建議 {size_category}: {base_meters} m)")
+        
         if 'custom_base_life' in data:
             # 使用者手動改過的話就套用
             self.spin_base_life_meters.blockSignals(True)
             self.spin_base_life_meters.setValue(data['custom_base_life'])
             self.spin_base_life_meters.blockSignals(False)
             return
-            
-        tool_mat = 'CARBIDE' if self.combo_tool_mat.currentText() == '鎢鋼 (Carbide)' else 'HSS'
-        work_mat = self.combo_work_mat.currentData() or 'SUS420'
-        base_meters = self.config_manager.data.get('base_life_meters', {}).get(tool_mat, {}).get(work_mat, 20.0)
-        
+
         self.spin_base_life_meters.blockSignals(True)
         self.spin_base_life_meters.setValue(base_meters)
         self.spin_base_life_meters.blockSignals(False)
