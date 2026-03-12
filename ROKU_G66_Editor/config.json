@@ -2,7 +2,7 @@
     "materials": {
         "AL6061": {
             "Vc": 100.0,
-            "fr_factor": 0.015,
+            "fr_factor": 0.017,
             "desc": "鋁合金 6061 (Aluminum)"
         },
         "SUS304": {
@@ -50,7 +50,7 @@
         }
     },
     "limits": {
-        "max_rpm": 40000.0,
+        "max_rpm": 10000.0,
         "min_q": 0.05,
         "micro_drill_threshold": 1.0,
         "micro_drill_penalty": 0.8

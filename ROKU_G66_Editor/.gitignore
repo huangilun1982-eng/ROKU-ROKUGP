@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Environment
+.venv/
+env/
+venv/
+ENV/
+
+# OS
+.DS_Store
+Thumbs.db
