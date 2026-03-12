@@ -650,12 +650,19 @@ class MainWindow(QMainWindow):
         
         mat_speed_ratio = 1.0 if tool_mat == 'CARBIDE' else 0.4
         vc_ref *= (mat_speed_ratio * coolant_factor)
+        
+        # [V2.1 修正] 微鑽基準切速補償：針對 D < 1.0 進行物理基準降級
+        if dia < 1.0:
+            micro_vc_factor = max(0.3, dia) # 與分析引擎同步：D=0.65 -> x0.65
+            vc_ref *= micro_vc_factor
 
-        # 3. 計算校正後的「刀具預估壽命」 (L_actual = L_base * (V_ref/V_actual)^(1/n))
+        # 3. 計算校正後的「刀具預估壽命」 
+        # [V2.1 修正] 改用距離倍率公式: L_act = L_base * (V_ref/V_act)^(1/n - 1)
+        # 這能確保 n=1.0 時，預估值精確等於理論基準
         correction_factor = 1.0
         if actual_vc > 0 and taylor_n > 0:
-            # 校正倍率
-            correction_factor = (vc_ref / actual_vc) ** (1.0 / taylor_n)
+            # 校正倍率 (距離維度)
+            correction_factor = (vc_ref / actual_vc) ** (1.0 / taylor_n - 1.0)
             # 限制合理範圍，避免數值過大或過小
             correction_factor = min(10.0, max(0.1, correction_factor))
             base_estimated = base_theoretical * correction_factor

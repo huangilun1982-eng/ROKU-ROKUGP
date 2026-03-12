@@ -245,9 +245,10 @@ class DrillingAnalysisEngine:
             if config:
                 n = config.data.get('taylor_params', {}).get(tool_mat_key, {}).get('n', n)
             
-        # 1. 速度因素
+        # 1. 速度因素 (Taylor 距離倍率公式)
+        # [V2.1 修正] 改用距離(長度)維度公式: (V_ref/V_act)^(1/n - 1)
         effective_vc_ref = vc_ref * coolant_factor
-        life_factor = (effective_vc_ref / vc_adj) ** (1.0 / n) if vc_adj > 0 else 0
+        life_factor = (effective_vc_ref / vc_adj) ** (1.0 / n - 1.0) if vc_adj > 0 else 0
         
         # 2. 深度懲罰 (熱累積)
         depth_penalty_severity = 0.08
