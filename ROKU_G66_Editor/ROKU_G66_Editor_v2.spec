@@ -5,8 +5,13 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=['matplotlib.backends.backend_qtagg'],
+    datas=[('../config.json', '.')],
+    hiddenimports=[
+        'matplotlib.backends.backend_qtagg',
+        'analysis_engine',
+        'config_manager',
+        'nc_parser'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

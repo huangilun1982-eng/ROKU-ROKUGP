@@ -3,11 +3,11 @@ set "PYTHON_EXE=C:\Users\CMAT-CNC-PC\AppData\Local\Programs\Python\Python313\pyt
 
 echo Used Python: "%PYTHON_EXE%"
 echo.
-echo Installing/Updating PyInstaller...
-"%PYTHON_EXE%" -m pip install pyinstaller
+echo Cleaning old build artifacts...
+if exist dist del /q /s dist\*
 echo.
-echo Building Executable...
-"%PYTHON_EXE%" -m PyInstaller --noconfirm --onefile --windowed --name "ROKU_G66_Editor_v2" --hidden-import "matplotlib.backends.backend_qtagg" --clean main.py
+echo Building Executable using Spec file...
+"%PYTHON_EXE%" -m PyInstaller --noconfirm --clean ROKU_G66_Editor_v2.spec
 echo.
 echo Build Done! Executable is in the 'dist' folder.
 pause

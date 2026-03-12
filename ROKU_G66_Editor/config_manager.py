@@ -71,23 +71,66 @@ class ConfigManager:
             'efficiency': {'peck_mult': 1.2, 'feed_mult': 1.1, 'seg_adj': -1, 'desc': '⚡ 效率優先'},
             'balanced':   {'peck_mult': 1.0, 'feed_mult': 1.0, 'seg_adj':  0, 'desc': '⚖️ 均衡'},
             'safety':     {'peck_mult': 0.7, 'feed_mult': 0.85,'seg_adj':  1, 'desc': '🛡️ 安全優先'}
+        },
+        # [V2.2 補齊] 加入基準壽命映射表，避免檔案缺失時產生 20.0m 的回退偏差
+        "base_life_meters": {
+            "CARBIDE": {
+                "AL6061":  {"nano": 5.0, "micro": 20.0, "small": 100.0, "medium": 150.0, "large": 200.0},
+                "SUS304":  {"nano": 2.0, "micro": 5.0,  "small": 12.0,  "medium": 20.0,  "large": 30.0},
+                "SUS420":  {"nano": 3.0, "micro": 8.0,  "small": 18.0,  "medium": 30.0,  "large": 45.0},
+                "TI6AL4V": {"nano": 2.0, "micro": 4.0,  "small": 10.0,  "medium": 15.0,  "large": 20.0},
+                "CERAMIC": {"nano": 1.0, "micro": 2.0,  "small": 5.0,   "medium": 8.0,   "large": 12.0}
+            },
+            "HSS": {
+                "AL6061":  {"nano": 3.0, "micro": 10.0, "small": 50.0, "medium": 80.0, "large": 120.0},
+                "SUS304":  {"nano": 1.0, "micro": 2.0,  "small": 5.0,  "medium": 8.0,  "large": 12.0},
+                "SUS420":  {"nano": 1.5, "micro": 3.0,  "small": 8.0,  "medium": 12.0, "large": 18.0},
+                "TI6AL4V": {"nano": 0.5, "micro": 1.5,  "small": 3.0,  "medium": 5.0,  "large": 8.0},
+                "CERAMIC": {"nano": 0.5, "micro": 1.0,  "small": 1.5,  "medium": 2.0,  "large": 3.0}
+            }
         }
     }
 
     def __init__(self, config_path="config.json"):
-        self.config_path = config_path
+        # [V2.2 打包修正] 獲取目前執行檔的實際路徑與資源暫存路徑
+        import sys
+        self.config_filename = config_path
+        
+        # 1. 外部實體路徑 (EXE 同級目錄) - 使用者自訂優先
+        if getattr(sys, 'frozen', False):
+            self.ext_path = os.path.join(os.path.dirname(sys.executable), config_path)
+        else:
+            self.ext_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config_path)
+            
+        # 2. 內部資源路徑 (_MEIPASS) - 打包時封裝的預設值
+        self.int_path = None
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            self.int_path = os.path.join(sys._MEIPASS, config_path)
+
+        self.config_path = self.ext_path # 預設存檔路徑設為外部，以便持久化
         self.data = self.load_config()
 
     def load_config(self):
-        """載入設定檔，若不存在則回傳預設值。"""
-        if os.path.exists(self.config_path):
+        """載入設定檔。優先順序：(1) 外部檔案 -> (2) 內部封裝檔案 -> (3) 代碼預設值"""
+        # 嘗試 (1) 外部檔案
+        if os.path.exists(self.ext_path):
             try:
-                with open(self.config_path, 'r', encoding='utf-8') as f:
+                with open(self.ext_path, 'r', encoding='utf-8') as f:
                     user_data = json.load(f)
-                    # 合併預設值以確保欄位完整 (以防舊版本遺漏新欄位)
                     return self._merge_defaults(self.DEFAULT_CONFIG, user_data)
             except Exception as e:
-                print(f"Error loading config: {e}")
+                print(f"Error loading external config: {e}")
+
+        # 嘗試 (2) 內部封裝檔案 (打包版適用)
+        if self.int_path and os.path.exists(self.int_path):
+            try:
+                with open(self.int_path, 'r', encoding='utf-8') as f:
+                    bundle_data = json.load(f)
+                    return self._merge_defaults(self.DEFAULT_CONFIG, bundle_data)
+            except Exception as e:
+                print(f"Error loading bundled config: {e}")
+                
+        # (3) 使用硬編碼預設值
         return copy.deepcopy(self.DEFAULT_CONFIG)
 
     def _merge_defaults(self, defaults, user):
