@@ -215,6 +215,7 @@ class MainWindow(QMainWindow):
         self.spin_life_n.setDecimals(2)
         self.spin_life_n.setValue(0.22)
         self.spin_life_n.setFixedWidth(150)
+        self.spin_life_n.valueChanged.connect(self.on_life_n_changed) # 專屬儲存邏輯
         self.spin_life_n.valueChanged.connect(self.on_param_changed)
         self.spin_life_n.valueChanged.connect(self._auto_load_base_life) # 動態聯動預估值
         self.spin_life_n.setToolTip("Taylor 刀具壽命指數 (n)。\n代表刀具對切削速度的敏感度：\n- 鎢鋼 (Carbide): 0.20 ~ 0.25 (建議 0.22)\n- 高速鋼 (HSS): 0.10 ~ 0.15 (建議 0.10)\n數值越大代表刀具越能承受高速切削。")
@@ -633,7 +634,20 @@ class MainWindow(QMainWindow):
         
         # 2. 取得當前工作參數以進行 Taylor 校正
         s_val = self.spin_rpm.value()
-        taylor_n = self.spin_life_n.value()
+        
+        # [持久化] 優先讀取單刀記憶的 n 值，若無則讀取全域預設
+        if 'custom_taylor_n' in data:
+            taylor_n = data['custom_taylor_n']
+        else:
+            taylor_n = 0.22 if tool_mat == 'CARBIDE' else 0.10
+            if self.config_manager:
+                taylor_n = self.config_manager.data.get('taylor_params', {}).get(tool_mat, {}).get('n', taylor_n)
+        
+        # 同步 UI 數值 (不觸發連動訊號以避免循環)
+        self.spin_life_n.blockSignals(True)
+        self.spin_life_n.setValue(taylor_n)
+        self.spin_life_n.blockSignals(False)
+
         mat_key = self.combo_work_mat.currentData()
         coolant_mode = self.combo_coolant.currentData()
         
@@ -745,6 +759,26 @@ class MainWindow(QMainWindow):
                 self.lbl_consumption.setText("本程式預估消耗: 0 % (NC 檔無座標行)")
             else:
                 self.lbl_consumption.setText(f"本程式預估消耗: -- % (共 {hole_count} 孔)")
+
+    def on_life_n_changed(self):
+        """當 Taylor 指數 n 變動時，同時紀錄到單刀資料與全域設定檔中"""
+        if self.current_tool_index == -1: return
+        n_val = self.spin_life_n.value()
+        data = self.parsed_data[self.current_tool_index]
+        
+        # 1. 紀錄到單刀資料 (編輯中記憶)
+        data['custom_taylor_n'] = n_val
+        
+        # 2. 紀錄到全域設定檔 (持久化記憶)
+        if self.config_manager:
+            tool_mat = 'CARBIDE' if self.combo_tool_mat.currentText() == '鎢鋼 (Carbide)' else 'HSS'
+            if 'taylor_params' not in self.config_manager.data:
+                self.config_manager.data['taylor_params'] = {}
+            if tool_mat not in self.config_manager.data['taylor_params']:
+                self.config_manager.data['taylor_params'][tool_mat] = {}
+                
+            self.config_manager.data['taylor_params'][tool_mat]['n'] = n_val
+            self.config_manager.save_config()
 
     def on_param_changed(self):
         if self.current_tool_index == -1: return
