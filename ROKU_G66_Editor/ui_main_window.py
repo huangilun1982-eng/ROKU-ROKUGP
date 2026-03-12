@@ -205,6 +205,7 @@ class MainWindow(QMainWindow):
         self.spin_rpm.setSingleStep(100)
         self.spin_rpm.setFixedWidth(150)
         self.spin_rpm.valueChanged.connect(self.on_param_changed) # Trigger update
+        self.spin_rpm.valueChanged.connect(self._auto_load_base_life) # 轉速變動也應聯動壽命預估
         form_smart.addRow("S (主軸轉速 RPM):", self.spin_rpm)
         
         # [新增] Taylor 壽命指數 n 輸入
@@ -215,6 +216,8 @@ class MainWindow(QMainWindow):
         self.spin_life_n.setValue(0.22)
         self.spin_life_n.setFixedWidth(150)
         self.spin_life_n.valueChanged.connect(self.on_param_changed)
+        self.spin_life_n.valueChanged.connect(self._auto_load_base_life) # 動態聯動預估值
+        self.spin_life_n.setToolTip("Taylor 刀具壽命指數 (n)。\n代表刀具對切削速度的敏感度：\n- 鎢鋼 (Carbide): 0.20 ~ 0.25 (建議 0.22)\n- 高速鋼 (HSS): 0.10 ~ 0.15 (建議 0.10)\n數值越大代表刀具越能承受高速切削。")
         form_smart.addRow("Taylor 壽命指數 (n):", self.spin_life_n)
         
         smart_layout.addLayout(form_smart)
@@ -421,9 +424,9 @@ class MainWindow(QMainWindow):
         self.spin_base_life_meters.setRange(0, 9999)
         self.spin_base_life_meters.setSuffix(" 公尺")
         self.spin_base_life_meters.valueChanged.connect(self.update_life_prediction)
-        self.lbl_base_life = QLabel("原廠基準壽命:")
+        self.lbl_base_life = QLabel("刀具預估壽命:")
         
-        self.lbl_base_life_hint = QLabel("(系統建議: -- 公尺)")
+        self.lbl_base_life_hint = QLabel("(系統理論值: -- m)")
         self.lbl_base_life_hint.setStyleSheet("color: #777; font-size: 12px;")
         
         base_life_h_layout = QHBoxLayout()
@@ -600,28 +603,73 @@ class MainWindow(QMainWindow):
             self.update_visualization()
             
         self.txt_nc_preview.setHtml(self.parser.generate_html(self.current_tool_index))
-        # [核心修復] 最後載入基準壽命，確保使用正確的當前刀徑
+        # [核心修復] 最後載入壽命，確保 D 與 S 已就緒
         self._auto_load_base_life()
-
+            
     def _auto_load_base_life(self):
-        """依據刀具直徑與材質自動載入預設基準壽命"""
+        """
+        依據刀具直徑與材質自動載入預設基準壽命，
+        並根據當前轉速 S 與 Taylor 指數 n 計算校正後的「刀具預估壽命」。
+        """
         if self.current_tool_index == -1: return
         data = self.parsed_data[self.current_tool_index]
         
         dia = self.spin_tool_dia.value()
-            
+        if dia <= 0: return
+
         tool_mat = 'CARBIDE' if self.combo_tool_mat.currentText() == '鎢鋼 (Carbide)' else 'HSS'
         work_mat = self.combo_work_mat.currentData() or 'SUS420'
         mat_config = self.config_manager.data.get('base_life_meters', {}).get(tool_mat, {}).get(work_mat, 20.0)
         
+        # 1. 取得理論插值基準 (純幾何因素)
+        from analysis_engine import DrillingAnalysisEngine
         if isinstance(mat_config, dict):
-            from analysis_engine import DrillingAnalysisEngine
-            base_meters = DrillingAnalysisEngine.interpolate_base_life(dia, mat_config)
-            base_meters = round(base_meters, 1)
+            base_theoretical = DrillingAnalysisEngine.interpolate_base_life(dia, mat_config)
+            base_theoretical = round(base_theoretical, 1)
         else:
-            base_meters = float(mat_config)
+            base_theoretical = float(mat_config)
             
-        self.lbl_base_life_hint.setText(f"(建議設定: {base_meters} m)")
+        self.lbl_base_life_hint.setText(f"(系統理論值: {base_theoretical} m)")
+        
+        # 2. 取得當前工作參數以進行 Taylor 校正
+        s_val = self.spin_rpm.value()
+        taylor_n = self.spin_life_n.value()
+        mat_key = self.combo_work_mat.currentData()
+        coolant_mode = self.combo_coolant.currentData()
+        
+        import math
+        actual_vc = (s_val * math.pi * dia) / 1000.0
+        
+        # 獲取參考切速 V_ref
+        vc_ref = 50.0
+        coolant_factor = 1.0
+        if self.config_manager:
+            m_data = self.config_manager.get_material_data(mat_key)
+            vc_ref = m_data.get('Vc', 50.0)
+            coolant_factor = self.config_manager.data.get('coolant_factors', {}).get(coolant_mode, 1.0)
+        
+        mat_speed_ratio = 1.0 if tool_mat == 'CARBIDE' else 0.4
+        vc_ref *= (mat_speed_ratio * coolant_factor)
+
+        # 3. 計算校正後的「刀具預估壽命」 (L_actual = L_base * (V_ref/V_actual)^(1/n))
+        correction_factor = 1.0
+        if actual_vc > 0 and taylor_n > 0:
+            # 校正倍率
+            correction_factor = (vc_ref / actual_vc) ** (1.0 / taylor_n)
+            # 限制合理範圍，避免數值過大或過小
+            correction_factor = min(10.0, max(0.1, correction_factor))
+            base_estimated = base_theoretical * correction_factor
+        else:
+            # 轉速為 0 時則顯示原始理論值
+            base_estimated = base_theoretical
+
+        # 儲存指標以便 update_life_prediction 讀取
+        data['current_life_index'] = correction_factor
+        
+        # 4. 更新 SpinBox (對應到畫面的「刀具預估壽命」)
+        self.spin_base_life_meters.blockSignals(True)
+        self.spin_base_life_meters.setValue(round(base_estimated, 1))
+        self.spin_base_life_meters.blockSignals(False)
         
         # [A 修復] 依刀徑動態調整 Q/I/J/K spinbox 的小數位數
         prec = 3 if dia < 0.5 else 2
@@ -629,25 +677,8 @@ class MainWindow(QMainWindow):
             if sb.decimals() != prec:
                 sb.setDecimals(prec)
         
-        # [更新] 套用預設 Taylor 指數 n
-        n_val = 0.22 if tool_mat == 'CARBIDE' else 0.10
-        if self.config_manager:
-            n_val = self.config_manager.data.get('taylor_params', {}).get(tool_mat, {}).get('n', n_val)
-        
-        self.spin_life_n.blockSignals(True)
-        self.spin_life_n.setValue(n_val)
-        self.spin_life_n.blockSignals(False)
-        
-        if 'custom_base_life' in data:
-            # 使用者手動改過的話就套用
-            self.spin_base_life_meters.blockSignals(True)
-            self.spin_base_life_meters.setValue(data['custom_base_life'])
-            self.spin_base_life_meters.blockSignals(False)
-            return
-
-        self.spin_base_life_meters.blockSignals(True)
-        self.spin_base_life_meters.setValue(base_meters)
-        self.spin_base_life_meters.blockSignals(False)
+        # 同步更新下游的孔數預估
+        self.update_life_prediction()
 
     def _update_life_analysis_ui(self, analysis_result):
         """更新分析面板中的 Life Index，並觸發總壽命預估計算"""
@@ -664,72 +695,38 @@ class MainWindow(QMainWindow):
         self.update_life_prediction()
 
     def update_life_prediction(self):
-        """依據基準距離、目前深度與孔數，計算等效孔數與消耗比例 (即時連動版)"""
+        """依據刀具預估壽命 (SpinBox)、目前深度與孔數，換算等效孔數與消耗比例"""
         if self.current_tool_index == -1: return
         data = self.parsed_data[self.current_tool_index]
         
-        # 1. 取得當前 UI 的各項預覽參數
-        base_meters = self.spin_base_life_meters.value()
-        s_val = self.spin_rpm.value()
-        dia = self.spin_tool_dia.value()
-        tool_mat = self.combo_tool_mat.currentData()
-        mat_key = self.combo_work_mat.currentData()
-        coolant_mode = self.combo_coolant.currentData()
-        taylor_n = self.spin_life_n.value()
+        # 1. 取得當前 UI 的資料 (直接以 SpinBox 數值為準)
+        base_meters = self.spin_base_life_meters.value() # 這已經是校正後或使用者手動填的
         z_val = self.spin_z.value()
         r_val = self.spin_r.value()
         hole_count = data.get('hole_count', 0)
+        hole_depth = abs(z_val - r_val)
         
-        if dia <= 0 or base_meters <= 0:
-            self.lbl_life_index.setText("Life Index: --")
-            self.lbl_est_total_holes.setText("等效預估總壽命: -- 孔 (參數不足)")
+        # 顯示當前的 Life Index (輔助提示)
+        life_idx = data.get('current_life_index', 1.0)
+        self.lbl_life_index.setText(f"Life Index: {life_idx:.2f}")
+
+        if base_meters <= 0:
+            self.lbl_est_total_holes.setText("等效預估總壽命: -- 孔 (壽命為 0)")
+            self.lbl_consumption.setText("本程式預估消耗: -- %")
+            return
+            
+        if hole_depth < 0.001:
+            self.lbl_est_total_holes.setText("等效預估總壽命: -- 孔 (深度過淺)")
             self.lbl_consumption.setText("本程式預估消耗: -- %")
             return
 
-        # 2. 計算即時切速 (vc_actual) 與參考切速 (vc_ref)
-        import math
-        from analysis_engine import DrillingAnalysisEngine
-        actual_vc = (s_val * math.pi * dia) / 1000.0
-        
-        vc_ref = 50.0
-        coolant_factor = 1.0
-        if self.config_manager:
-            mat_data = self.config_manager.get_material_data(mat_key)
-            vc_ref = mat_data.get('Vc', 50.0)
-            coolant_factor = self.config_manager.data.get('coolant_factors', {}).get(coolant_mode, 1.0)
-            
-        mat_speed_ratio = 1.0 if tool_mat == 'CARBIDE' else 0.4
-        vc_ref *= mat_speed_ratio
-        
-        # 3. 呼叫引擎計算即時 Life Index
-        hole_depth = abs(z_val - r_val)
-        ld_ratio = hole_depth / dia if dia > 0 else 0
-        
-        life_idx = DrillingAnalysisEngine.estimate_tool_life_index(
-            vc_adj=actual_vc,
-            vc_ref=vc_ref,
-            tool_mat_key=tool_mat,
-            ld_ratio=ld_ratio,
-            config=self.config_manager,
-            coolant_factor=coolant_factor,
-            taylor_n=taylor_n
-        )
-        
-        # 4. 更新介面顯示
-        self.lbl_life_index.setText(f"Life Index: {life_idx:.2f}")
-        data['current_life_index'] = life_idx
-        data['custom_base_life'] = base_meters
-        
-        if hole_depth < 0.001:
-            self.lbl_est_total_holes.setText("等效預估總壽命: -- 孔 (深度過淺)")
-            return
-            
-        # 計算：預估可切削總長度(mm) = 基準距離(m) * 1000 * 壽命係數
-        est_total_mm = (base_meters * 1000.0) * life_idx
+        # 2. 計算：預估可切削總長度(mm) = 預期壽命(m) * 1000
+        est_total_mm = (base_meters * 1000.0)
         est_holes = est_total_mm / hole_depth
         
         self.lbl_est_total_holes.setText(f"等效預估總壽命: {int(est_holes)} 孔")
         
+        # 3. 消耗比例分析
         if est_holes > 0 and hole_count > 0:
             consumption = (hole_count / est_holes) * 100.0
             color = "#d32f2f" if consumption > 50 else ("#f57c00" if consumption > 20 else "#2e7d32")

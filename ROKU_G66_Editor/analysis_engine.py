@@ -14,11 +14,11 @@ class DrillingAnalysisEngine:
     @staticmethod
     def interpolate_base_life(diameter, mat_config_dict):
         """
-        以對數插值計算基準壽命，取代區塊式分類。
-        mat_config_dict 為字典，例如 {"nano": 5.0, "micro": 20.0, ...}
+        以雙對數 (Log-Log) 插值計算基準壽命，實現真正的 Power-law (指數型) 分級。
+        公式背景：L = a * D^b => log(L) = log(a) + b * log(D)
         """
         import math
-        # 定義錨點直徑
+        # 定義錨點直徑與對應壽命 (公尺)
         anchors = [
             (0.2, mat_config_dict.get('nano', 5.0)),
             (1.0, mat_config_dict.get('micro', 20.0)),
@@ -39,9 +39,20 @@ class DrillingAnalysisEngine:
             d1, v1 = anchors[i]
             d2, v2 = anchors[i+1]
             if d1 <= d_safe <= d2:
-                # 對數線性插值
-                t = (log_d - math.log10(d1)) / (math.log10(d2) - math.log10(d1))
-                return float(v1 + t * (v2 - v1))
+                # 確保數值大於 0 方可取對數
+                v1_safe = max(0.1, v1)
+                v2_safe = max(0.1, v2)
+                
+                # 雙對數線性插值
+                log_v1 = math.log10(v1_safe)
+                log_v2 = math.log10(v2_safe)
+                log_d1 = math.log10(d1)
+                log_d2 = math.log10(d2)
+                
+                t = (log_d - log_d1) / (log_d2 - log_d1)
+                log_res = log_v1 + t * (log_v2 - log_v1)
+                return float(10**log_res)
+                
         return float(anchors[-1][1])
     
     @staticmethod
