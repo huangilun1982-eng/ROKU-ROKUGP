@@ -601,28 +601,19 @@ class MainWindow(QMainWindow):
         data = self.parsed_data[self.current_tool_index]
         
         dia = self.spin_tool_dia.value()
-        size_category = "medium"
-        if dia < 0.5:
-            size_category = "nano"
-        elif dia < 3.0:
-            size_category = "micro"
-        elif dia < 6.0:
-            size_category = "small"
-        elif dia < 12.0:
-            size_category = "medium"
-        else:
-            size_category = "large"
             
         tool_mat = 'CARBIDE' if self.combo_tool_mat.currentText() == '鎢鋼 (Carbide)' else 'HSS'
         work_mat = self.combo_work_mat.currentData() or 'SUS420'
         mat_config = self.config_manager.data.get('base_life_meters', {}).get(tool_mat, {}).get(work_mat, 20.0)
         
         if isinstance(mat_config, dict):
-            base_meters = mat_config.get(size_category, 20.0)
+            from analysis_engine import DrillingAnalysisEngine
+            base_meters = DrillingAnalysisEngine.interpolate_base_life(dia, mat_config)
+            base_meters = round(base_meters, 1)
         else:
             base_meters = float(mat_config)
             
-        self.lbl_base_life_hint.setText(f"(建議 {size_category}: {base_meters} m)")
+        self.lbl_base_life_hint.setText(f"(建議設定: {base_meters} m)")
         
         # [A 修復] 依刀徑動態調整 Q/I/J/K spinbox 的小數位數
         # 微鑽 (D<0.5mm) 的參數值可能只有 0.00x，需要 3 位精度

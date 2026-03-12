@@ -10,6 +10,39 @@ class DrillingAnalysisEngine:
     def _precision_for_dia(diameter):
         """依刀徑決定適當的小數位精度 (位數)"""
         return 3 if diameter < 0.5 else 2
+
+    @staticmethod
+    def interpolate_base_life(diameter, mat_config_dict):
+        """
+        以對數插值計算基準壽命，取代區塊式分類。
+        mat_config_dict 為字典，例如 {"nano": 5.0, "micro": 20.0, ...}
+        """
+        import math
+        # 定義錨點直徑
+        anchors = [
+            (0.2, mat_config_dict.get('nano', 5.0)),
+            (1.0, mat_config_dict.get('micro', 20.0)),
+            (3.0, mat_config_dict.get('small', 50.0)),
+            (6.0, mat_config_dict.get('medium', 100.0)),
+            (12.0, mat_config_dict.get('large', 150.0))
+        ]
+        
+        d_safe = max(0.01, diameter)
+        log_d = math.log10(d_safe)
+        
+        if d_safe <= anchors[0][0]:
+            return float(anchors[0][1])
+        if d_safe >= anchors[-1][0]:
+            return float(anchors[-1][1])
+            
+        for i in range(len(anchors) - 1):
+            d1, v1 = anchors[i]
+            d2, v2 = anchors[i+1]
+            if d1 <= d_safe <= d2:
+                # 對數線性插值
+                t = (log_d - math.log10(d1)) / (math.log10(d2) - math.log10(d1))
+                return float(v1 + t * (v2 - v1))
+        return float(anchors[-1][1])
     
     @staticmethod
     def calc_drilling_time(ijk_list, feedrate, r_point, g0_speed, is_ijk_mode, clearance=0.1):
@@ -237,23 +270,10 @@ class DrillingAnalysisEngine:
         # I 倍數隨深孔遞減 (每增 1 倍 L/D，倍數降 0.1)
         i_factor = max(0.5, min(base_i_mult, base_i_mult - 0.1 * r))
         
-        # [P5 修復 V2] 安全天花板：依刀徑分級設定最大允許 I 倍數
-        # ┌──────────────┬───────────────┬──────────────────────────┐
-        # │ 刀徑區間      │ I 最大倍數    │ 理由                      │
-        # ├──────────────┼───────────────┼──────────────────────────┤
-        # │ D < 0.5mm    │ 1.5D          │ 奈米/微鑽極脆弱            │
-        # │ 0.5 ≤ D < 1  │ 2.0D          │ 微鑽，保守為上             │
-        # │ 1 ≤ D < 3    │ 2.5D          │ 小鑽，適度放寬             │
-        # │ D ≥ 3        │ 3.0D          │ 標準鑽頭，可較激進         │
-        # └──────────────┴───────────────┴──────────────────────────┘
-        if diameter < 0.5:
-            max_i_mult = 1.5
-        elif diameter < 1.0:
-            max_i_mult = 2.0
-        elif diameter < 3.0:
-            max_i_mult = 2.5
-        else:
-            max_i_mult = 3.0
+        # [連續型分級] 安全天花板：依 log10(D) 計算最大允許 I 倍數平滑曲線
+        # 基準：D=1.0 時為 2.0D，每增/跌 10 倍直徑增加/減少 1.0D
+        max_i_mult = 2.0 + 1.0 * math.log10(max(0.05, diameter))
+        max_i_mult = max(0.8, min(3.0, max_i_mult))
         
         # 實際 I 值 = min(演算法算出值, 刀徑分級天花板)
         i_val_raw = diameter * i_factor
@@ -262,8 +282,9 @@ class DrillingAnalysisEngine:
         # J 遞減量保持平滑
         j_factor = max(0.02, min(0.15, 0.15 - 0.005 * r))
         # K 保底深度受冷卻加持
-        # [D 修復] K 最低保障：微鑽至少 0.5D，一般至少 0.3D
-        k_floor = 0.5 if diameter < 1.0 else 0.3
+        # [連續型分級] K 最低保障：對數平滑曲線 (D=1.0 時為 0.4D)
+        k_floor = 0.4 - 0.2 * math.log10(max(0.05, diameter))
+        k_floor = max(0.2, min(0.6, k_floor))
         k_factor = max(k_floor, min(0.60 * env_bonus, 0.50 * env_bonus - 0.015 * r))
         
         # 依刀徑決定回傳精度
@@ -664,15 +685,9 @@ class DrillingAnalysisEngine:
                     peck_mat_factor = config.data.get('peck_factors', {}).get(material_key, 1.0)
                 q_val = tool_dia * 0.8 * peck_mat_factor
                 
-                # [C 修復] Q 分級天花板 (與 I 相同概念)
-                if tool_dia < 0.5:
-                    max_q_mult = 1.0
-                elif tool_dia < 1.0:
-                    max_q_mult = 1.5
-                elif tool_dia < 3.0:
-                    max_q_mult = 2.0
-                else:
-                    max_q_mult = 2.5
+                # [連續型分級] Q 分級天花板平滑對數曲線 (D=1.0 時為 1.5D)
+                max_q_mult = 1.5 + 1.0 * math.log10(max(0.05, tool_dia))
+                max_q_mult = max(0.5, min(2.5, max_q_mult))
                 q_val = min(q_val, tool_dia * max_q_mult)
                 
                 min_q = config.get_limit('min_q') if config else 0.05
