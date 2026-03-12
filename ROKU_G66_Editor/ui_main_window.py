@@ -207,6 +207,16 @@ class MainWindow(QMainWindow):
         self.spin_rpm.valueChanged.connect(self.on_param_changed) # Trigger update
         form_smart.addRow("S (主軸轉速 RPM):", self.spin_rpm)
         
+        # [新增] Taylor 壽命指數 n 輸入
+        self.spin_life_n = QDoubleSpinBox()
+        self.spin_life_n.setRange(0.01, 1.0)
+        self.spin_life_n.setSingleStep(0.01)
+        self.spin_life_n.setDecimals(2)
+        self.spin_life_n.setValue(0.22)
+        self.spin_life_n.setFixedWidth(150)
+        self.spin_life_n.valueChanged.connect(self.on_param_changed)
+        form_smart.addRow("Taylor 壽命指數 (n):", self.spin_life_n)
+        
         smart_layout.addLayout(form_smart)
         
         # Buttons
@@ -616,11 +626,19 @@ class MainWindow(QMainWindow):
         self.lbl_base_life_hint.setText(f"(建議設定: {base_meters} m)")
         
         # [A 修復] 依刀徑動態調整 Q/I/J/K spinbox 的小數位數
-        # 微鑽 (D<0.5mm) 的參數值可能只有 0.00x，需要 3 位精度
         prec = 3 if dia < 0.5 else 2
         for sb in [self.spin_q, self.spin_g83_i, self.spin_g83_j, self.spin_g83_k]:
             if sb.decimals() != prec:
                 sb.setDecimals(prec)
+        
+        # [更新] 套用預設 Taylor 指數 n
+        n_val = 0.22 if tool_mat == 'CARBIDE' else 0.10
+        if self.config_manager:
+            n_val = self.config_manager.data.get('taylor_params', {}).get(tool_mat, {}).get('n', n_val)
+        
+        self.spin_life_n.blockSignals(True)
+        self.spin_life_n.setValue(n_val)
+        self.spin_life_n.blockSignals(False)
         
         if 'custom_base_life' in data:
             # 使用者手動改過的話就套用
@@ -890,7 +908,8 @@ class MainWindow(QMainWindow):
             tip_angle=self.spin_tip_angle.value(),
             config=self.config_manager,
             coolant_mode=coolant_mode,
-            prefer_ijk=prefer_ijk
+            prefer_ijk=prefer_ijk,
+            taylor_n=self.spin_life_n.value()
         )
         
         # 顯示優化報告

@@ -222,14 +222,17 @@ class DrillingAnalysisEngine:
         return pecks
 
     @staticmethod
-    def estimate_tool_life_index(vc_adj, vc_ref, tool_mat_key, ld_ratio, feed_ratio=1.0, config=None, coolant_factor=1.0, use_ijk=False):
+    def estimate_tool_life_index(vc_adj, vc_ref, tool_mat_key, ld_ratio, feed_ratio=1.0, config=None, coolant_factor=1.0, use_ijk=False, taylor_n=None):
         """
         計算相對刀具壽命指標 (Tool Life Index)。
         基於 Taylor 公式修正，結果 clamp 在 [0, 10.0] 範圍內。
         """
-        n = 0.22 if tool_mat_key == 'CARBIDE' else 0.10
-        if config:
-            n = config.data.get('taylor_params', {}).get(tool_mat_key, {}).get('n', n)
+        # 使用傳入的 taylor_n 或從配置讀取
+        n = taylor_n
+        if n is None:
+            n = 0.22 if tool_mat_key == 'CARBIDE' else 0.10
+            if config:
+                n = config.data.get('taylor_params', {}).get(tool_mat_key, {}).get('n', n)
             
         # 1. 速度因素
         effective_vc_ref = vc_ref * coolant_factor
@@ -562,7 +565,8 @@ class DrillingAnalysisEngine:
                                    config=None,
                                    coolant_mode="Oil",
                                    prefer_ijk=None,
-                                   preset='balanced'):
+                                   preset='balanced',
+                                   taylor_n=None):
         """計算最佳化切削參數 (進階工業模型版)"""
         result = {
             'S': 0.0, 'F': 0.0, 'Q': 0.0, 
@@ -748,7 +752,8 @@ class DrillingAnalysisEngine:
             feed_ratio=feed_adj_factor, 
             config=config, 
             coolant_factor=coolant_factor,
-            use_ijk=final_use_ijk
+            use_ijk=final_use_ijk,
+            taylor_n=taylor_n
         )
         result['life_index'] = round(life_idx, 2)
         
